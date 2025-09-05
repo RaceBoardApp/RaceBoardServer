@@ -124,7 +124,8 @@
       "Read(/Users/user/Documents/Raceboard UI/Raceboard UI/**)",
       "Read(/Users/user/Documents/Raceboard UI/Raceboard UI/**)",
       "Read(/Users/user/Documents/Raceboard UI/Raceboard UI/**)",
-      "Bash(./squash_to_initial.sh:*)"
+      "Bash(./squash_to_initial.sh:*)",
+      "Bash(git log:*)"
     ],
     "deny": [],
     "ask": []
