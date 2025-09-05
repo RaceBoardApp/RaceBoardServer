@@ -19,18 +19,6 @@ Raceboard is a local-first productivity tool that tracks "races" - long-running 
 - **💾 Local-First** - All data stored locally with sled database
 - **🎨 Beautiful UI** - Native macOS SwiftUI application with smooth animations
 
-## 🖼️ Screenshots
-
-### Dual-Rail Progress Visualization
-The innovative dual-rail progress bar shows both server-reported progress (solid) and predicted progress (striped overlay), eliminating confusion when updates arrive:
-
-```
-[████████████░░░░░░░░] 60% (server)
-[████████████▓▓▓░░░░░] 75% (predicted)
-         ↑       ↑
-      Solid   Striped
-```
-
 ### Features in Action
 - **ETA Revision Detection**: When ETAs increase, a "Revised ETA" pill appears
 - **Trust Windows**: Smart prediction activation based on data freshness
@@ -39,14 +27,6 @@ The innovative dual-rail progress bar shows both server-reported progress (solid
 ## 🚀 Quick Start
 
 ### Installation
-
-#### macOS (Homebrew)
-```bash
-# Coming soon
-brew tap raceboard/tap
-brew install raceboard
-```
-
 #### From Source
 ```bash
 # Clone the repository
