@@ -1,0 +1,40 @@
+# GitLab Pipeline Adapter Configuration
+# Copy this file to gitlab_config.toml and update with your settings
+
+[gitlab]
+# Your GitLab instance URL (use https://gitlab.com for GitLab.com)
+url = "https://gitlab.com"
+
+# Your GitLab personal access token
+# Create one at: https://gitlab.com/-/profile/personal_access_tokens
+# Required scopes: read_api, read_user
+api_token = "glpat-xxxxxxxxxxxxxxxxxxxx"
+
+# Your GitLab user ID
+# Find it at: https://gitlab.com/-/profile (in the URL or page source)
+user_id = 12345
+
+[raceboard]
+# Raceboard server URL
+server_url = "http://localhost:7777"
+
+[sync]
+# How often to poll GitLab for updates (in seconds)
+interval_seconds = 30
+
+# Maximum number of pipelines to track at once
+max_pipelines = 20
+
+# How far back to look for pipelines (in hours)
+lookback_hours = 24
+
+[webhook]
+# Enable webhook server for real-time updates
+enabled = false
+
+# Port for webhook server
+port = 8082
+
+# Secret token for webhook signature verification
+# Must match the secret token configured in GitLab webhook settings
+secret = "your-webhook-secret"

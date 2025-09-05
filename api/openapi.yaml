@@ -1,0 +1,255 @@
+openapi: 3.0.0
+info:
+  title: Raceboard API
+  description: API for the Raceboard personal productivity tool.
+  version: 1.0.0
+servers:
+  - url: http://localhost:7777
+paths:
+  /health:
+    get:
+      summary: Server health and status
+      responses:
+        '200':
+          description: Health status payload.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    description: Overall status (e.g., healthy or critical).
+                  service:
+                    type: string
+                  version:
+                    type: string
+                  read_only_mode_active:
+                    type: boolean
+                  storage:
+                    type: object
+                    properties:
+                      total_races:
+                        type: integer
+                      max_races:
+                        type: integer
+                      usage_percent:
+                        type: number
+                      eviction_count:
+                        type: integer
+                      cluster_data_sufficient:
+                        type: boolean
+                      warnings:
+                        type: array
+                        items:
+                          type: string
+                      critical_errors:
+                        type: array
+                        items:
+                          type: string
+  /races:
+    get:
+      summary: List all races
+      responses:
+        '200':
+          description: A list of races.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Race'
+  /race:
+    post:
+      summary: Create or update a race
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Race'
+      responses:
+        '200':
+          description: The created or updated race.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Race'
+  /race/{id}:
+    get:
+      summary: Get a single race
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: A single race.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Race'
+    patch:
+      summary: Patch race fields
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RaceUpdate'
+      responses:
+        '200':
+          description: The updated race.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Race'
+    delete:
+      summary: Delete a race
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Confirmation the race was deleted.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                  id:
+                    type: string
+  /race/{id}/event:
+    post:
+      summary: Append an event to a race
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Event'
+      responses:
+        '200':
+          description: The updated race.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Race'
+  /clusters:
+    get:
+      summary: List ETA clusters (diagnostics)
+      responses:
+        '200':
+          description: Cluster list.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+  /cluster/{id}:
+    get:
+      summary: Get a single cluster (diagnostics)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Cluster detail.
+          content:
+            application/json:
+              schema:
+                type: object
+components:
+  schemas:
+    Race:
+      type: object
+      properties:
+        id:
+          type: string
+        source:
+          type: string
+        title:
+          type: string
+        state:
+          type: string
+          enum: [queued, running, passed, failed, canceled]
+        started_at:
+          type: string
+          format: date-time
+        completed_at:
+          type: string
+          format: date-time
+          description: Server-populated when the race reaches a terminal state.
+        duration_sec:
+          type: integer
+          description: Elapsed seconds; populated when the race completes.
+        eta_sec:
+          type: integer
+        progress:
+          type: integer
+        deeplink:
+          type: string
+        metadata:
+          type: object
+          additionalProperties:
+            type: string
+        events:
+          type: array
+          items:
+            $ref: '#/components/schemas/Event'
+    RaceUpdate:
+        type: object
+        properties:
+            source:
+                type: string
+            title:
+                type: string
+            state:
+                type: string
+                enum: [queued, running, passed, failed, canceled]
+            started_at:
+                type: string
+                format: date-time
+            eta_sec:
+                type: integer
+            progress:
+                type: integer
+            deeplink:
+                type: string
+            metadata:
+                type: object
+                additionalProperties:
+                    type: string
+    Event:
+      type: object
+      properties:
+        type:
+          type: string
+        data:
+          oneOf:
+            - type: object
+            - type: string
+          description: Free-form payload; adapters often send structured JSON.

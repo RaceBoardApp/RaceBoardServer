@@ -1,0 +1,20 @@
+# Raceboard Server Configuration
+
+[server]
+# HTTP server configuration
+http_port = 7777
+http_host = "127.0.0.1"
+
+# gRPC server configuration  
+grpc_port = 50051
+grpc_host = "127.0.0.1"
+
+[logging]
+# Log level: trace, debug, info, warn, error
+level = "info"
+
+[storage]
+# Maximum number of races to keep in memory
+max_races = 1000000
+# Maximum number of events per race
+max_events_per_race = 100

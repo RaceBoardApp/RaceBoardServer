@@ -1,0 +1,24 @@
+#!/bin/bash
+
+# rcmd - A simple wrapper for raceboard-cmd that shows output by default
+# Usage: rcmd <command>
+# Example: rcmd ls -la
+# Example: rcmd cargo build --release
+# Example: rcmd task kit:lint
+
+RACEBOARD_CMD="${RACEBOARD_CMD:-/Users/user/RustroverProjects/RaceboardServer/target/release/raceboard-cmd}"
+
+# Check if raceboard-cmd exists
+if [ ! -f "$RACEBOARD_CMD" ]; then
+    echo "Error: raceboard-cmd not found at $RACEBOARD_CMD"
+    echo "Please build it with: cargo build --release --bin raceboard-cmd"
+    exit 1
+fi
+
+# If first argument is --, skip it (user added it by mistake)
+if [ "$1" = "--" ]; then
+    shift
+fi
+
+# Run the command with output enabled by default
+exec "$RACEBOARD_CMD" --output -- "$@"

@@ -1,0 +1,91 @@
+[package]
+name = "RaceboardServer"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "raceboard-server"
+path = "src/main.rs"
+
+[[bin]]
+name = "raceboard-cmd"
+path = "src/bin/cmd_runner.rs"
+
+[[bin]]
+name = "raceboard-claude"
+path = "src/bin/claude_adapter.rs"
+
+[[bin]]
+name = "raceboard-track"
+path = "src/bin/raceboard_track.rs"
+
+[[bin]]
+name = "raceboard-codex-watch"
+path = "src/bin/raceboard_codex_watch.rs"
+
+[[bin]]
+name = "raceboard-gemini-watch"
+path = "src/bin/raceboard_gemini_watch.rs"
+
+[[bin]]
+name = "raceboard-calendar"
+path = "src/bin/raceboard_calendar.rs"
+
+[[bin]]
+name = "raceboard-gitlab"
+path = "src/bin/raceboard_gitlab.rs"
+
+
+[dependencies]
+actix-web = "4"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["full"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+chrono-tz = "0.8"
+env_logger = "0.10"
+log = "0.4"
+clap = { version = "4", features = ["derive"] }
+reqwest = { version = "0.11", features = ["json"] }
+anyhow = "1"
+shellexpand = "3"
+tonic = "0.11"
+prost = "0.12"
+prost-types = "0.12"
+config = "0.14"
+tokio-stream = { version = "0.1", features = ["sync"] }
+futures = "0.3"
+regex = "1"
+dirs = "5"
+notify = "4"
+sled = "0.34"
+bincode = "1.3"
+strsim = "0.11"
+tempfile = "3"
+async-trait = "0.1"
+lru = "0.12"
+rand = "0.8"
+unicode-normalization = "0.1"
+levenshtein = "1.0"
+seahash = "4.1"
+hnsw = "0.11"
+space = "0.17"
+zstd = "0.13"
+flate2 = "1.0"
+lz4 = "1.24"
+toml = "0.8"
+google-calendar3 = "5"
+yup-oauth2 = "9"
+hyper = { version = "0.14", features = ["http1", "client"] }
+hyper-rustls = { version = "0.23", features = ["http1"] }
+base64 = "0.21"
+blake3 = "1"
+crc32fast = "1"
+sha2 = "0.10"
+hmac = "0.12"
+hex = "0.4"
+ical = "0.10"
+
+[build-dependencies]
+tonic-build = "0.11"

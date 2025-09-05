@@ -1,0 +1,68 @@
+# Rust build artifacts
+/target/
+**/*.rs.bk
+*.pdb
+
+# Cargo lock file (include for binary projects, exclude for libraries)
+# Uncomment if this is a library
+# Cargo.lock
+
+# IDE and editor files
+.idea/
+*.swp
+*.swo
+*~
+.vscode/
+*.iml
+.DS_Store
+
+# Environment and config files
+.env
+.env.local
+*.local.json
+
+# Database files
+*.db
+*.db-shm
+*.db-wal
+*.sled
+*.lock
+
+# Log files
+*.log
+logs/
+
+# Test output
+test-results/
+coverage/
+*.profraw
+*.profdata
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+*.temp
+*.bak
+
+# OS files
+Thumbs.db
+.DS_Store
+desktop.ini
+
+# Python cache (if any Python scripts)
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Shell script artifacts
+*.pid
+
+# Documentation build
+docs/_build/
+docs/.doctrees/
+
+# Raceboard specific
+.raceboard/
+eta_history.db*
+/test_*.sh

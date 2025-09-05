@@ -1,0 +1,17 @@
+[gitlab]
+url = "https://gitlab.com"
+api_token = "glpat-xxxxxxxxxxxxxxxxxxxx"  # Replace with your actual token
+user_id = 12345  # Replace with your GitLab user ID
+
+[raceboard]
+server_url = "http://localhost:7777"
+
+[sync]
+interval_seconds = 60
+max_pipelines = 100
+lookback_hours = 24
+
+[webhook]
+enabled = false
+port = 8082
+secret = "your-webhook-secret"

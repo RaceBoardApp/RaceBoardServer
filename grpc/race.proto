@@ -1,0 +1,139 @@
+syntax = "proto3";
+
+package raceboard;
+
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/empty.proto";
+
+// The service definition.
+service RaceService {
+  // Streams all race updates.
+  rpc StreamRaces(google.protobuf.Empty) returns (stream RaceUpdate);
+  
+  // Get a specific race by ID
+  rpc GetRace(GetRaceRequest) returns (Race);
+  
+  // Create or update a race
+  rpc CreateRace(Race) returns (Race);
+  
+  // Update race fields
+  rpc UpdateRace(UpdateRaceRequest) returns (Race);
+  
+  // Add event to a race
+  rpc AddEvent(AddEventRequest) returns (Race);
+  
+  // List all races (snapshot)
+  rpc ListRaces(google.protobuf.Empty) returns (RaceList);
+  
+  // Delete a race by ID
+  rpc DeleteRace(DeleteRaceRequest) returns (google.protobuf.Empty);
+}
+
+// Represents the state of a race.
+enum RaceState {
+  UNSPECIFIED = 0;
+  QUEUED = 1;
+  RUNNING = 2;
+  PASSED = 3;
+  FAILED = 4;
+  CANCELED = 5;
+}
+
+// NEW: Indicates how ETA was determined
+enum EtaSource {
+  ETA_SOURCE_UNSPECIFIED = 0;
+  ETA_SOURCE_EXACT = 1;        // Known end time (e.g., calendar events)
+  ETA_SOURCE_ADAPTER = 2;       // Provided by adapter (estimated)
+  ETA_SOURCE_CLUSTER = 3;       // Server prediction from clusters
+  ETA_SOURCE_BOOTSTRAP = 4;     // Server bootstrap default
+}
+
+// NEW: Track ETA changes for revision detection
+message EtaRevision {
+  int64 eta_sec = 1;
+  google.protobuf.Timestamp timestamp = 2;
+  EtaSource source = 3;
+  optional double confidence = 4;
+}
+
+// Represents a single race with optimistic progress support.
+message Race {
+  string id = 1;
+  string source = 2;
+  string title = 3;
+  RaceState state = 4;
+  google.protobuf.Timestamp started_at = 5;
+  optional int64 eta_sec = 6;
+  optional int32 progress = 7;
+  optional string deeplink = 8;
+  map<string, string> metadata = 9;
+  repeated Event events = 10;
+  
+  // NEW FIELDS for Optimistic Progress v2
+  // All optional for backward compatibility
+  optional google.protobuf.Timestamp last_progress_update = 11;  // When progress last changed
+  optional google.protobuf.Timestamp last_eta_update = 12;       // When ETA last changed  
+  optional EtaSource eta_source = 13;                           // How ETA was determined
+  optional double eta_confidence = 14;                          // 0.0-1.0 confidence score
+  optional int32 update_interval_hint = 15;                     // Expected seconds between updates
+  repeated EtaRevision eta_history = 16;                        // Recent ETA changes (max 5)
+}
+
+// Represents an event in a race
+message Event {
+  string type = 1;
+  optional string data = 2;
+  google.protobuf.Timestamp timestamp = 3;
+}
+
+// Race update for streaming
+message RaceUpdate {
+  enum UpdateType {
+    UNSPECIFIED = 0;
+    CREATED = 1;
+    UPDATED = 2;
+    DELETED = 3;
+  }
+  
+  UpdateType type = 1;
+  Race race = 2;
+}
+
+// Request for GetRace
+message GetRaceRequest {
+  string id = 1;
+}
+
+// Request for UpdateRace (with new optional fields)
+message UpdateRaceRequest {
+  string id = 1;
+  optional string source = 2;
+  optional string title = 3;
+  optional RaceState state = 4;
+  optional google.protobuf.Timestamp started_at = 5;
+  optional int64 eta_sec = 6;
+  optional int32 progress = 7;
+  optional string deeplink = 8;
+  map<string, string> metadata = 9;
+  
+  // NEW: Adapters can optionally provide these
+  optional EtaSource eta_source = 10;      // How certain is this ETA?
+  optional double eta_confidence = 11;     // 0.0-1.0 confidence
+  optional int32 update_interval_hint = 12; // How often adapter updates
+}
+
+// Request for AddEvent
+message AddEventRequest {
+  string race_id = 1;
+  Event event = 2;
+}
+
+// List of races
+message RaceList {
+  repeated Race races = 1;
+}
+
+// Request for DeleteRace
+message DeleteRaceRequest {
+  string id = 1;
+}
