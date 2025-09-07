@@ -71,21 +71,49 @@ raceboard-calendar --config calendar_config.toml
 ## 🏗️ Architecture
 
 ```
-┌─────────────────┐     ┌──────────────┐     ┌─────────────┐
-│   Adapters      │────▶│  Raceboard   │────▶│   UI Apps   │
-│ (GitLab, etc.)  │     │   Server     │     │  (macOS)    │
-└─────────────────┘     └──────────────┘     └─────────────┘
-         │                      │                     │
-         ▼                      ▼                     ▼
-    [REST API]            [sled DB]             [gRPC Stream]
+┌─────────────────┐         ┌──────────────────┐         ┌─────────────┐
+│   Adapters      │  REST   │  Raceboard      │  gRPC   │   UI Apps   │
+│ • GitLab CI     │────────▶│     Server       │◀────────│  • macOS    │
+│ • Calendar      │ /race   │                  │ Stream  │  • Terminal │
+│ • Claude AI     │ PATCH   │  • Race Storage  │ :50051  │  • Web      │
+│ • Codex         │ :7777   │  • ML Prediction │         │             │
+└─────────────────┘         │  • Event System  │         └─────────────┘
+                            │                  │
+                            └──────────────────┘
+                                     │
+                                     ▼
+                            ┌──────────────────┐
+                            │   Persistence    │
+                            │   • sled DB      │
+                            │   • Clusters     │
+                            │   • History      │
+                            └──────────────────┘
 ```
 
-### Core Components
+### Core Components & Communication
 
-- **Server** (`raceboard-server`): Rust-based API server with REST and gRPC
-- **Adapters**: Integrate with external services (GitLab, GitHub, Calendar, etc.)
-- **UI**: Native macOS SwiftUI application
-- **ML Engine**: ETA prediction using DBSCAN clustering
+#### Raceboard Server (Core)
+- Listens on `localhost:7777` (REST) and `localhost:50051` (gRPC)
+- Manages race lifecycle and state
+- Performs ML-based ETA predictions
+- Persists data to local sled database
+
+#### Adapters → Server (REST API)
+- Adapters push updates via `POST/PATCH http://localhost:7777/race`
+- Create races, update progress, report completion
+- Fire-and-forget pattern for reliability
+
+#### UI Apps ← Server (gRPC Stream)
+- UI subscribes to real-time updates via gRPC streaming
+- Bidirectional: UI can also query and dismiss races
+- Automatic reconnection on network issues
+
+#### Data Flow
+1. **External Service** (e.g., GitLab) → **Adapter** polls/webhooks
+2. **Adapter** → **Server** via REST (create/update race)
+3. **Server** → **Database** (persist state)
+4. **Server** → **UI** via gRPC stream (real-time updates)
+5. **UI** → **User** (visual progress with dual-rail)
 
 ## 📚 Documentation
 
