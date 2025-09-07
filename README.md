@@ -30,8 +30,8 @@ Raceboard is a local-first productivity tool that tracks "races" - long-running 
 #### From Source
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/raceboard.git
-cd raceboard
+git clone https://github.com/RaceBoardApp/RaceBoardServer.git
+cd RaceBoardServer
 
 # Build and install
 cargo build --release
@@ -116,8 +116,8 @@ raceboard-calendar --config calendar_config.toml
 
 ```bash
 # Clone repository
-git clone https://github.com/yourusername/raceboard.git
-cd raceboard
+git clone https://github.com/RaceBoardApp/RaceBoardServer.git
+cd RaceBoardServer
 
 # Build server
 cargo build --release
@@ -180,9 +180,9 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## 📮 Contact & Support
 
-- 🐛 [Report Issues](https://github.com/yourusername/raceboard/issues)
-- 💬 [Discussions](https://github.com/yourusername/raceboard/discussions)
-- 📖 [Documentation](https://github.com/yourusername/raceboard/wiki)
+- 🐛 [Report Issues](https://github.com/RaceBoardApp/RaceBoardServer/issues)
+- 💬 [Discussions](https://github.com/RaceBoardApp/RaceBoardServer/discussions)
+- 📖 [Documentation](https://github.com/RaceBoardApp/RaceBoardServer/wiki)
 
 ---
 
