@@ -1,3 +1,5 @@
+pub mod adapter_common;
+pub mod adapter_status;
 pub mod app_state;
 pub mod cluster;
 pub mod config;

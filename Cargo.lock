@@ -52,6 +52,7 @@ dependencies = [
  "toml",
  "tonic",
  "tonic-build",
+ "tracing",
  "unicode-normalization",
  "uuid",
  "yup-oauth2",

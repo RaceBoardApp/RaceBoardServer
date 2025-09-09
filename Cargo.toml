@@ -15,9 +15,6 @@ path = "src/bin/cmd_runner.rs"
 name = "raceboard-claude"
 path = "src/bin/claude_adapter.rs"
 
-[[bin]]
-name = "raceboard-track"
-path = "src/bin/raceboard_track.rs"
 
 [[bin]]
 name = "raceboard-codex-watch"
@@ -34,6 +31,7 @@ path = "src/bin/raceboard_calendar.rs"
 [[bin]]
 name = "raceboard-gitlab"
 path = "src/bin/raceboard_gitlab.rs"
+
 
 
 [dependencies]
@@ -75,6 +73,7 @@ zstd = "0.13"
 flate2 = "1.0"
 lz4 = "1.24"
 toml = "0.8"
+tracing = "0.1"
 google-calendar3 = "5"
 yup-oauth2 = "9"
 hyper = { version = "0.14", features = ["http1", "client"] }

@@ -874,3 +874,140 @@ pub async fn get_cluster_debug(
         }))),
     }
 }
+
+// ============================================================================
+// Adapter Status Handlers
+// ============================================================================
+
+use crate::adapter_status::{AdapterRegistration, AdapterMetrics};
+
+/// Register an adapter (self-registration)
+pub async fn adapter_register(
+    registration: web::Json<AdapterRegistration>,
+    data: web::Data<AppState>,
+) -> Result<HttpResponse> {
+    let registration = registration.into_inner();
+    
+    // Register the adapter
+    data.adapter_registry.register(registration.clone()).await
+        .map_err(|e| actix_web::error::ErrorInternalServerError(e))?;
+    
+    log::info!(
+        "Adapter registered: {} (instance: {})",
+        registration.adapter_type.as_str(),
+        registration.instance_id
+    );
+    
+    Ok(HttpResponse::Ok().json(json!({
+        "status": "registered",
+        "adapter_id": registration.id,
+        "health_interval_seconds": registration.health_interval_seconds,
+        "message": "Adapter successfully registered"
+    })))
+}
+
+/// Report adapter health
+pub async fn adapter_health(
+    data: web::Data<AppState>,
+    req: web::Json<serde_json::Value>,
+) -> Result<HttpResponse> {
+    let adapter_id = req.get("adapter_id")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| actix_web::error::ErrorBadRequest("Missing adapter_id"))?;
+    
+    let metrics = req.get("metrics")
+        .and_then(|v| serde_json::from_value::<AdapterMetrics>(v.clone()).ok())
+        .unwrap_or_default();
+    
+    let error = req.get("error")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+    
+    // Update health
+    data.adapter_registry.report_health(adapter_id, metrics, error).await
+        .map_err(|e| actix_web::error::ErrorInternalServerError(e))?;
+    
+    Ok(HttpResponse::Ok().json(json!({
+        "status": "ok",
+        "adapter_id": adapter_id,
+        "message": "Health report received"
+    })))
+}
+
+/// Deregister an adapter (clean shutdown)
+pub async fn adapter_deregister(
+    data: web::Data<AppState>,
+    req: web::Json<serde_json::Value>,
+) -> Result<HttpResponse> {
+    let adapter_id = req.get("adapter_id")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| actix_web::error::ErrorBadRequest("Missing adapter_id"))?;
+    
+    // Deregister
+    data.adapter_registry.deregister(adapter_id).await
+        .map_err(|e| actix_web::error::ErrorInternalServerError(e))?;
+    
+    log::info!("Adapter deregistered: {}", adapter_id);
+    
+    Ok(HttpResponse::Ok().json(json!({
+        "status": "deregistered",
+        "adapter_id": adapter_id,
+        "message": "Adapter successfully deregistered"
+    })))
+}
+
+/// Get adapter status for UI
+pub async fn get_adapter_status(
+    data: web::Data<AppState>,
+) -> Result<HttpResponse> {
+    let adapters = data.adapter_registry.get_all().await;
+    let summary = data.adapter_registry.get_summary().await;
+    
+    let mut adapter_list = Vec::new();
+    for (reg, health) in adapters {
+        adapter_list.push(json!({
+            "id": reg.id,
+            "type": reg.adapter_type.as_str(),
+            "instance": reg.instance_id,
+            "display_name": reg.display_name,
+            "version": reg.version,
+            "state": health.state.as_str(),
+            "state_color": health.state.color(),
+            "registered_at": reg.registered_at,
+            "last_report": health.last_report,
+            "seconds_since_report": health.seconds_since_report(),
+            "metrics": {
+                "races_created": health.metrics.races_created,
+                "races_updated": health.metrics.races_updated,
+                "last_activity": health.metrics.last_activity,
+                "error_count": health.metrics.error_count,
+            },
+            "error": health.error,
+            "pid": reg.pid,
+        }));
+    }
+    
+    Ok(HttpResponse::Ok().json(json!({
+        "adapters": adapter_list,
+        "summary": {
+            "total": summary.total_adapters,
+            "healthy": summary.healthy_count(),
+            "unhealthy": summary.unhealthy_count(),
+            "operational": summary.all_operational(),
+            "races_created": summary.total_races_created,
+            "races_updated": summary.total_races_updated,
+            "last_update": summary.last_update,
+        }
+    })))
+}
+
+/// Get Prometheus metrics
+pub async fn get_adapter_metrics(
+    data: web::Data<AppState>,
+) -> Result<HttpResponse> {
+    let metrics = data.adapter_registry.export_metrics().await;
+    
+    Ok(HttpResponse::Ok()
+        .content_type("text/plain; version=0.0.4")
+        .body(metrics))
+}

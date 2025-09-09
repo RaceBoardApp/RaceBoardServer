@@ -8,8 +8,16 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::time::sleep;
+use tokio::time::{sleep, timeout};
 use tokio::signal;
+
+// Import shared types and client from adapter_common
+use RaceboardServer::adapter_common::{
+    Race, RaceState, RaceUpdate, RaceboardClient, ServerConfig
+};
+
+// GitLab API timeout - separate from Raceboard client timeout
+const GITLAB_API_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[derive(Debug, Deserialize)]
 struct Config {
@@ -20,18 +28,41 @@ struct Config {
     webhook: WebhookConfig,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 struct GitLabConfig {
     url: String,
     api_token: String,
     user_id: u64,
     #[serde(default)]
     project_ids: Vec<u64>,  // Additional specific projects to monitor
+    #[serde(default)]
+    discovery: DiscoveryConfig,
 }
 
 #[derive(Debug, Clone, Deserialize)]
+struct DiscoveryConfig {
+    #[serde(default = "default_max_contributed_pages")]
+    contributed_max_pages: usize,
+    #[serde(default = "default_per_page")]
+    per_page: usize,
+}
+
+impl Default for DiscoveryConfig {
+    fn default() -> Self {
+        Self {
+            contributed_max_pages: default_max_contributed_pages(),
+            per_page: default_per_page(),
+        }
+    }
+}
+
+fn default_max_contributed_pages() -> usize { 20 }
+fn default_per_page() -> usize { 100 }
+
+#[derive(Debug, Clone, Deserialize)]
 struct RaceboardConfig {
-    server_url: String,
+    #[serde(flatten)]
+    server: ServerConfig,
 }
 
 #[derive(Debug, Deserialize)]
@@ -72,11 +103,15 @@ struct GitLabPipeline {
     web_url: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 struct GitLabProject {
     id: u64,
     name: String,
     path_with_namespace: String,
+    #[serde(default)]
+    archived: bool,
+    last_activity_at: Option<String>,
+    web_url: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -132,18 +167,7 @@ struct WebhookUser {
     id: u64,
 }
 
-#[derive(Debug, Serialize)]
-struct Race {
-    id: String,
-    source: String,
-    title: String,
-    state: String,
-    started_at: DateTime<Utc>,
-    eta_sec: Option<i64>,
-    progress: Option<u8>,
-    deeplink: Option<String>,
-    metadata: HashMap<String, String>,
-}
+// Race struct now imported from adapter_common
 
 #[derive(Debug, Serialize, Deserialize)]
 struct AdapterState {
@@ -151,12 +175,17 @@ struct AdapterState {
     last_pipeline_ids: HashSet<u64>,
 }
 
+// Constants for contributed projects
+const CONTRIBUTED_RECENCY_DAYS: i64 = 365;  // 1 year
+
 struct GitLabClient {
     client: Client,
     base_url: String,
     headers: HeaderMap,
     additional_project_ids: Vec<u64>,
     username: Option<String>,
+    contributed_supported: bool,
+    config: GitLabConfig,
 }
 
 impl GitLabClient {
@@ -174,6 +203,8 @@ impl GitLabClient {
             headers,
             additional_project_ids: config.project_ids.clone(),
             username: None,
+            contributed_supported: false,
+            config: config.clone(),
         })
     }
     
@@ -181,11 +212,15 @@ impl GitLabClient {
         let url = format!("{}/api/v4/user", self.base_url);
         log::info!("Verifying API token with: {}", url);
         
-        let response = self.client
-            .get(&url)
-            .headers(self.headers.clone())
-            .send()
-            .await?;
+        let response = timeout(
+            GITLAB_API_TIMEOUT,
+            self.client
+                .get(&url)
+                .headers(self.headers.clone())
+                .send()
+        ).await
+        .context("GitLab API request timed out")?
+        .context("Failed to send request to GitLab API")?;
             
         let status = response.status();
         
@@ -222,11 +257,198 @@ impl GitLabClient {
         
         Ok(())
     }
+    
+    async fn check_contributed_support(&mut self, metrics: Option<&Arc<Metrics>>) -> Result<()> {
+        // Use the username we already have from verify_token()
+        let username = self.username.as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Username not set. Call verify_token first"))?;
+            
+        let url = format!(
+            "{}/api/v4/users/{}/contributed_projects?per_page=1",
+            self.base_url, username
+        );
+        
+        match timeout(
+            Duration::from_secs(5),
+            self.client
+                .get(&url)
+                .headers(self.headers.clone())
+                .send()
+        ).await {
+            Ok(Ok(resp)) if resp.status() == StatusCode::OK => {
+                log::info!("✓ Contributed projects API supported");
+                self.contributed_supported = true;
+                if let Some(metrics) = metrics {
+                    metrics.contributed_api_supported.store(true, Ordering::Relaxed);
+                }
+            }
+            Ok(Ok(resp)) if resp.status() == StatusCode::NOT_FOUND => {
+                log::info!("Contributed projects API not available (older GitLab version)");
+                self.contributed_supported = false;
+            }
+            _ => {
+                log::debug!("Could not determine contributed projects support, assuming unavailable");
+                self.contributed_supported = false;
+            }
+        }
+        Ok(())
+    }
+    
+    async fn get_contributed_projects(&self) -> Result<Vec<GitLabProject>> {
+        if !self.contributed_supported {
+            return Ok(Vec::new());
+        }
+        
+        let username = self.username.as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Username not set"))?;
+        
+        let mut all_projects = Vec::new();
+        let mut page = 1;
+        let cutoff = Utc::now() - chrono::Duration::days(CONTRIBUTED_RECENCY_DAYS);
+        let max_pages = self.config.discovery.contributed_max_pages;
+        let per_page = self.config.discovery.per_page;
+        
+        while page <= max_pages {
+            let url = format!(
+                "{}/api/v4/users/{}/contributed_projects?page={}&per_page={}&order_by=last_activity_at&sort=desc",
+                self.base_url, username, page, per_page
+            );
+            
+            let response = match timeout(
+                GITLAB_API_TIMEOUT,
+                self.client
+                    .get(&url)
+                    .headers(self.headers.clone())
+                    .send()
+            ).await {
+                Ok(Ok(resp)) => resp,
+                Ok(Err(e)) => {
+                    log::warn!("Failed to fetch contributed projects page {}: {}", page, e);
+                    break;
+                }
+                Err(_) => {
+                    log::warn!("Timeout fetching contributed projects page {}", page);
+                    break;
+                }
+            };
+            
+            if !response.status().is_success() {
+                log::warn!("Failed to fetch contributed projects page {}: {}", 
+                          page, response.status());
+                break;
+            }
+            
+            let projects: Vec<GitLabProject> = match response.json().await {
+                Ok(p) => p,
+                Err(e) => {
+                    log::warn!("Failed to parse contributed projects: {}", e);
+                    break;
+                }
+            };
+            
+            if projects.is_empty() {
+                break; // No more pages
+            }
+            
+            // Filter and add projects
+            for project in projects {
+                // Skip archived projects (hardcoded rule)
+                if project.archived {
+                    continue;
+                }
+                
+                // Check recency cutoff
+                if let Some(last_activity) = &project.last_activity_at {
+                    if let Ok(activity_time) = DateTime::parse_from_rfc3339(last_activity) {
+                        let activity_utc = activity_time.with_timezone(&Utc);
+                        if activity_utc < cutoff {
+                            // Projects are sorted by activity, so we can stop here
+                            log::debug!("Reached activity cutoff at page {}", page);
+                            return Ok(all_projects);
+                        }
+                    }
+                }
+                
+                all_projects.push(project);
+            }
+            
+            page += 1;
+        }
+        
+        if !all_projects.is_empty() {
+            log::info!("Fetched {} contributed projects", all_projects.len());
+        }
+        Ok(all_projects)
+    }
+    
+    async fn get_all_projects_merged(&self, user_id: u64, metrics: Option<&Arc<Metrics>>) -> Result<Vec<GitLabProject>> {
+        // Track projects by ID to merge duplicates
+        let mut projects_map: HashMap<u64, (GitLabProject, &str)> = HashMap::new();
+        
+        // 1. Get membership projects (existing)
+        let membership_projects = self.get_user_projects(user_id).await?;
+        for project in membership_projects {
+            projects_map.insert(project.id, (project, "membership"));
+        }
+        
+        // 2. Get contributed projects (new)
+        let contributed_projects = self.get_contributed_projects().await?;
+        for project in contributed_projects {
+            projects_map
+                .entry(project.id)
+                .and_modify(|(existing, source)| {
+                    // Merge: prefer project with more recent activity
+                    if let (Some(new_activity), Some(old_activity)) = 
+                        (&project.last_activity_at, &existing.last_activity_at) {
+                        if new_activity > old_activity {
+                            *existing = project.clone();
+                        }
+                    }
+                    *source = "both";  // Mark as from both sources
+                })
+                .or_insert((project, "contributed"));
+        }
+        
+        // 3. Add explicitly configured project IDs
+        for &project_id in &self.additional_project_ids {
+            if !projects_map.contains_key(&project_id) {
+                if let Ok(project) = self.get_project(project_id).await {
+                    projects_map.insert(project_id, (project, "config"));
+                }
+            }
+        }
+        
+        // Count sources for logging
+        let membership_count = projects_map.values().filter(|(_, s)| *s == "membership").count();
+        let contributed_count = projects_map.values().filter(|(_, s)| *s == "contributed").count();
+        let both_count = projects_map.values().filter(|(_, s)| *s == "both").count();
+        let config_count = projects_map.values().filter(|(_, s)| *s == "config").count();
+        
+        // Update metrics if provided
+        if let Some(metrics) = metrics {
+            metrics.membership_projects_found.store(membership_count as u64, Ordering::Relaxed);
+            metrics.contributed_projects_found.store(contributed_count as u64, Ordering::Relaxed);
+            metrics.duplicate_projects_merged.store(both_count as u64, Ordering::Relaxed);
+        }
+        
+        log::info!(
+            "Processing {} unique projects (membership: {}, contributed: {}, both: {}, config: {})",
+            projects_map.len(),
+            membership_count,
+            contributed_count,
+            both_count,
+            config_count
+        );
+        
+        // Return the merged list of projects
+        Ok(projects_map.into_iter().map(|(_, (project, _))| project).collect())
+    }
 
     async fn get_user_pipelines(
         &self,
         user_id: u64,
         lookback_hours: i64,
+        metrics: Option<&Arc<Metrics>>,
     ) -> Result<Vec<GitLabPipeline>> {
         let mut all_pipelines = Vec::new();
         let cutoff = Utc::now() - chrono::Duration::hours(lookback_hours);
@@ -241,24 +463,34 @@ impl GitLabClient {
             cutoff.to_rfc3339()
         );
         
-        if let Ok(response) = self.client
-            .get(&url)
-            .headers(self.headers.clone())
-            .send()
-            .await
+        match timeout(
+            GITLAB_API_TIMEOUT,
+            self.client
+                .get(&url)
+                .headers(self.headers.clone())
+                .send()
+        ).await
         {
-            if response.status().is_success() {
+            Ok(Ok(response)) if response.status().is_success() => {
                 if let Ok(pipelines) = response.json::<Vec<GitLabPipeline>>().await {
                     log::info!("Found {} pipelines via direct API", pipelines.len());
                     return Ok(pipelines);
                 }
             }
+            Ok(Err(_)) => {
+                log::warn!("Direct pipeline API call failed, falling back to per-project fetching");
+            }
+            Err(_) => {
+                log::warn!("Direct pipeline API call timed out, falling back to per-project fetching");
+            }
+            _ => {
+                log::warn!("Direct pipeline API call failed with non-success status, falling back");
+            }
         }
         
-        // Fallback: Get all accessible projects first
-        log::info!("Falling back to per-project pipeline fetching");
-        let projects = self.get_user_projects(user_id).await?;
-        log::info!("Found {} accessible projects", projects.len());
+        // Get all projects including membership, contributed, and configured ones
+        let projects = self.get_all_projects_merged(user_id, metrics).await?;
+        log::info!("Found {} accessible projects (including contributed)", projects.len());
         
         for project in projects {
             let mut page = 1;
@@ -286,11 +518,15 @@ impl GitLabClient {
                 log::info!("Fetching pipelines for project '{}' (ID: {})", project.name, project.id);
                 log::debug!("Fetching URL: {}", url);
                 
-                let response = self.client
-                    .get(&url)
-                    .headers(self.headers.clone())
-                    .send()
-                    .await?;
+                let response = timeout(
+                    GITLAB_API_TIMEOUT,
+                    self.client
+                        .get(&url)
+                        .headers(self.headers.clone())
+                        .send()
+                ).await
+                .context("GitLab API request timed out")?
+                .context("Failed to send request to GitLab API")?;
                 
                 let status = response.status();
                 
@@ -385,11 +621,15 @@ impl GitLabClient {
             
             log::debug!("Fetching projects from: {}", url);
             
-            let response = self.client
-                .get(&url)
-                .headers(self.headers.clone())
-                .send()
-                .await?;
+            let response = timeout(
+                GITLAB_API_TIMEOUT,
+                self.client
+                    .get(&url)
+                    .headers(self.headers.clone())
+                    .send()
+            ).await
+            .context("GitLab API request timed out")?
+            .context("Failed to send request to GitLab API")?;
             
             let status = response.status();
             
@@ -455,11 +695,15 @@ impl GitLabClient {
     async fn get_project(&self, project_id: u64) -> Result<GitLabProject> {
         let url = format!("{}/api/v4/projects/{}", self.base_url, project_id);
         
-        let response = self.client
-            .get(&url)
-            .headers(self.headers.clone())
-            .send()
-            .await?;
+        let response = timeout(
+            GITLAB_API_TIMEOUT,
+            self.client
+                .get(&url)
+                .headers(self.headers.clone())
+                .send()
+        ).await
+        .context("GitLab API request timed out")?
+        .context("Failed to send request to GitLab API")?;
         
         Ok(response.json().await?)
     }
@@ -470,28 +714,32 @@ impl GitLabClient {
             self.base_url, project_id, pipeline_id
         );
         
-        let response = self.client
-            .get(&url)
-            .headers(self.headers.clone())
-            .send()
-            .await?;
+        let response = timeout(
+            GITLAB_API_TIMEOUT,
+            self.client
+                .get(&url)
+                .headers(self.headers.clone())
+                .send()
+        ).await
+        .context("GitLab API request timed out")?
+        .context("Failed to send request to GitLab API")?;
         
         Ok(response.json().await?)
     }
 }
 
-fn map_gitlab_state(state: &str) -> String {
+fn map_gitlab_state(state: &str) -> RaceState {
     match state {
-        "created" | "waiting_for_resource" | "pending" | "scheduled" | "manual" => "queued",
-        "preparing" | "running" => "running",
-        "success" => "passed",
-        "failed" => "failed",
-        "canceled" | "skipped" => "canceled",
-        _ => "queued",
-    }.to_string()
+        "created" | "waiting_for_resource" | "pending" | "scheduled" | "manual" => RaceState::Queued,
+        "preparing" | "running" => RaceState::Running,
+        "success" => RaceState::Passed,
+        "failed" => RaceState::Failed,
+        "canceled" | "skipped" => RaceState::Canceled,
+        _ => RaceState::Queued,
+    }
 }
 
-fn calculate_progress(jobs: &[GitLabJob]) -> Option<u8> {
+fn calculate_progress(jobs: &[GitLabJob]) -> Option<i32> {
     if jobs.is_empty() {
         return None;
     }
@@ -500,7 +748,7 @@ fn calculate_progress(jobs: &[GitLabJob]) -> Option<u8> {
         .filter(|j| matches!(j.status.as_str(), "success" | "skipped" | "manual"))
         .count();
     
-    Some((completed * 100 / jobs.len()) as u8)
+    Some((completed * 100 / jobs.len()) as i32)
 }
 
 async fn pipeline_to_race(
@@ -533,38 +781,25 @@ async fn pipeline_to_race(
         eta_sec: None, // Server will calculate
         progress: calculate_progress(&jobs),
         deeplink: Some(pipeline.web_url.clone()),
-        metadata,
+        metadata: Some(metadata),
     })
 }
 
-async fn upsert_race(race: &Race, config: &RaceboardConfig, is_new: bool) -> Result<()> {
-    let client = Client::new();
-    
-    // Use create (POST) for new pipelines, update (PATCH) for existing ones
-    let (url, method) = if is_new {
-        (format!("{}/race", config.server_url), "POST")
+async fn upsert_race(race: &Race, raceboard_client: &RaceboardClient, is_new: bool) -> Result<()> {
+    if is_new {
+        raceboard_client.create_race(race).await?;
+        log::debug!("Created race: {}", race.id);
     } else {
-        (format!("{}/race/{}", config.server_url, race.id), "PATCH")
-    };
-    
-    let request = if method == "POST" {
-        client.post(&url)
-    } else {
-        client.patch(&url)
-    };
-    
-    let response = request
-        .json(race)
-        .send()
-        .await?;
-    
-    if !response.status().is_success() {
-        anyhow::bail!(
-            "Failed to {} race: {} - {}",
-            if is_new { "create" } else { "update" },
-            response.status(),
-            response.text().await?
-        );
+        // For updates, create a RaceUpdate with only the fields that might have changed
+        let update = RaceUpdate {
+            state: Some(race.state.clone()),
+            eta_sec: race.eta_sec,
+            progress: race.progress,
+            deeplink: race.deeplink.clone(),
+            metadata: race.metadata.clone(),
+        };
+        raceboard_client.update_race(&race.id, &update).await?;
+        log::debug!("Updated race: {}", race.id);
     }
     
     Ok(())
@@ -645,6 +880,11 @@ struct Metrics {
     errors: AtomicU64,
     last_sync: Arc<tokio::sync::RwLock<DateTime<Utc>>>,
     is_healthy: AtomicBool,
+    // Project discovery metrics
+    membership_projects_found: AtomicU64,
+    contributed_projects_found: AtomicU64,
+    duplicate_projects_merged: AtomicU64,
+    contributed_api_supported: AtomicBool,
 }
 
 impl Metrics {
@@ -657,6 +897,10 @@ impl Metrics {
             errors: AtomicU64::new(0),
             last_sync: Arc::new(tokio::sync::RwLock::new(Utc::now())),
             is_healthy: AtomicBool::new(true),
+            membership_projects_found: AtomicU64::new(0),
+            contributed_projects_found: AtomicU64::new(0),
+            duplicate_projects_merged: AtomicU64::new(0),
+            contributed_api_supported: AtomicBool::new(false),
         })
     }
 }
@@ -680,7 +924,7 @@ fn verify_webhook_signature(secret: &str, signature: &str, body: &[u8]) -> bool 
 
 async fn handle_webhook_event(
     event: WebhookEvent,
-    config: &RaceboardConfig,
+    raceboard_client: &RaceboardClient,
     user_id: u64,
 ) -> Result<()> {
     match event.data {
@@ -710,7 +954,7 @@ async fn handle_webhook_event(
                 eta_sec: None,
                 progress: None, // Would need to fetch jobs to calculate
                 deeplink: None, // Not provided in webhook
-                metadata: {
+                metadata: Some({
                     let mut m = HashMap::new();
                     m.insert("project_name".to_string(), event.project.name);
                     m.insert("branch".to_string(), 
@@ -718,11 +962,11 @@ async fn handle_webhook_event(
                     m.insert("commit_sha".to_string(), 
                         object_attributes.sha.chars().take(8).collect());
                     m
-                },
+                }),
             };
             
             let is_new = matches!(object_attributes.status.as_str(), "created" | "pending");
-            upsert_race(&race, config, is_new).await?;
+            upsert_race(&race, raceboard_client, is_new).await?;
             
             log::info!("Processed webhook for pipeline {}", object_attributes.id);
         }
@@ -738,7 +982,7 @@ async fn handle_webhook_event(
 
 async fn start_webhook_server(
     config: WebhookConfig,
-    raceboard_config: RaceboardConfig,
+    raceboard_client: RaceboardClient,
     user_id: u64,
     metrics: Arc<Metrics>,
 ) {
@@ -747,18 +991,18 @@ async fn start_webhook_server(
     let port = config.port;
     HttpServer::new(move || {
         let config = config.clone();
-        let raceboard_config = raceboard_config.clone();
+        let raceboard_client = raceboard_client.clone();
         let metrics = metrics.clone();
         
         App::new()
             .app_data(web::Data::new(config.clone()))
-            .app_data(web::Data::new(raceboard_config.clone()))
+            .app_data(web::Data::new(raceboard_client.clone()))
             .app_data(web::Data::new(metrics.clone()))
             .route("/webhooks/gitlab", web::post().to(move |
                 req: HttpRequest,
                 body: web::Bytes,
                 webhook_config: web::Data<WebhookConfig>,
-                raceboard_cfg: web::Data<RaceboardConfig>,
+                raceboard_client: web::Data<RaceboardClient>,
                 metrics: web::Data<Arc<Metrics>>,
             | {
                 let user_id = user_id;
@@ -781,9 +1025,9 @@ async fn start_webhook_server(
                             log::info!("Received {} webhook", event.object_kind);
                             
                             // Process in background to respond quickly
-                            let raceboard_cfg = (*raceboard_cfg).clone();
+                            let raceboard_client = (*raceboard_client).clone();
                             tokio::spawn(async move {
-                                if let Err(e) = handle_webhook_event(event, &raceboard_cfg, user_id).await {
+                                if let Err(e) = handle_webhook_event(event, &raceboard_client, user_id).await {
                                     log::error!("Failed to handle webhook: {}", e);
                                 }
                             });
@@ -831,6 +1075,10 @@ async fn start_health_server(metrics: Arc<Metrics>) -> actix_web::dev::Server {
                         "races_updated": data.races_updated.load(Ordering::Relaxed),
                         "races_finished": data.races_finished.load(Ordering::Relaxed),
                         "errors": data.errors.load(Ordering::Relaxed),
+                        "membership_projects": data.membership_projects_found.load(Ordering::Relaxed),
+                        "contributed_projects": data.contributed_projects_found.load(Ordering::Relaxed),
+                        "duplicate_projects": data.duplicate_projects_merged.load(Ordering::Relaxed),
+                        "contributed_api_supported": data.contributed_api_supported.load(Ordering::Relaxed),
                     }
                 });
                 
@@ -861,17 +1109,24 @@ async fn main() -> Result<()> {
     log::info!("GitLab URL from config: {}", config.gitlab.url);
     log::info!("GitLab User ID: {}", config.gitlab.user_id);
     
+    // Initialize metrics early so we can pass it to GitLab client
+    let metrics = Metrics::new();
+    
     let mut gitlab = GitLabClient::new(&config.gitlab)?;
     log::info!("GitLab client initialized for {}", gitlab.base_url);
     
     // Verify the API token works
     gitlab.verify_token().await?;
     
+    // Check contributed projects support
+    gitlab.check_contributed_support(Some(&metrics)).await?;
+    
+    // Create Raceboard client
+    let raceboard_client = RaceboardClient::new(config.raceboard.server.clone())
+        .context("Failed to create Raceboard client")?;
+    
     let mut state = load_state();
     log::info!("State loaded. Last sync: {}", state.last_sync);
-    
-    // Initialize metrics
-    let metrics = Metrics::new();
     
     // Start health check server
     let metrics_clone = metrics.clone();
@@ -881,14 +1136,14 @@ async fn main() -> Result<()> {
     // Start webhook server if enabled
     if config.webhook.enabled {
         let webhook_config = config.webhook.clone();
-        let raceboard_config = config.raceboard.clone();
+        let raceboard_client_clone = raceboard_client.clone();
         let user_id = config.gitlab.user_id;
         let metrics_clone = metrics.clone();
         
         tokio::spawn(async move {
             log::info!("Starting webhook server on http://0.0.0.0:{}/webhooks/gitlab", 
                 webhook_config.port);
-            start_webhook_server(webhook_config, raceboard_config, user_id, metrics_clone).await;
+            start_webhook_server(webhook_config, raceboard_client_clone, user_id, metrics_clone).await;
         });
     } else {
         log::info!("Webhook server disabled");
@@ -919,6 +1174,7 @@ async fn main() -> Result<()> {
             gitlab.get_user_pipelines(
                 config.gitlab.user_id,
                 config.sync.lookback_hours,
+                Some(&metrics),
             ).await
         }).await;
         
@@ -952,7 +1208,7 @@ async fn main() -> Result<()> {
                                 log::info!("Processing pipeline {} (status: {}) -> race {} ({})", 
                                     pipeline.id, pipeline.status, race.id, if is_new { "new" } else { "update" });
                                 
-                                if let Err(e) = upsert_race(&race, &config.raceboard, is_new).await {
+                                if let Err(e) = upsert_race(&race, &raceboard_client, is_new).await {
                                     log::error!("Failed to upsert race {}: {}", race.id, e);
                                     metrics.errors.fetch_add(1, Ordering::Relaxed);
                                 } else {
@@ -962,9 +1218,9 @@ async fn main() -> Result<()> {
                                     } else {
                                         metrics.races_updated.fetch_add(1, Ordering::Relaxed);
                                         // Track if this update marks the race as finished
-                                        if matches!(race.state.as_str(), "passed" | "failed" | "canceled") && was_tracking {
+                                        if matches!(race.state, RaceState::Passed | RaceState::Failed | RaceState::Canceled) && was_tracking {
                                             metrics.races_finished.fetch_add(1, Ordering::Relaxed);
-                                            log::info!("Pipeline {} finished with state: {}", pipeline.id, race.state);
+                                            log::info!("Pipeline {} finished with state: {:?}", pipeline.id, race.state);
                                         }
                                     }
                                 }

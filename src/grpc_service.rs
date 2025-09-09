@@ -1,3 +1,4 @@
+use crate::adapter_status::AdapterRegistry;
 use crate::persistence::PersistenceLayer;
 use crate::storage::{Storage, StorageEvent};
 use std::sync::Arc;
@@ -11,18 +12,26 @@ use raceboard::race_service_server::RaceService;
 use raceboard::{
     race_update, AddEventRequest, DeleteRaceRequest, Event as ProtoEvent, GetRaceRequest,
     Race as ProtoRace, RaceList, RaceState as ProtoRaceState, RaceUpdate, UpdateRaceRequest,
+    SystemStatus, AdapterStatus as ProtoAdapterStatus, AdapterHealthState as ProtoHealthState,
+    AdapterType as ProtoAdapterType, AdapterMetrics as ProtoMetrics,
 };
 
 pub struct RaceServiceImpl {
     storage: Arc<Storage>,
     persistence: Arc<PersistenceLayer>,
+    adapter_registry: Arc<AdapterRegistry>,
 }
 
 impl RaceServiceImpl {
-    pub fn new(storage: Arc<Storage>, persistence: Arc<PersistenceLayer>) -> Self {
+    pub fn new(
+        storage: Arc<Storage>, 
+        persistence: Arc<PersistenceLayer>,
+        adapter_registry: Arc<AdapterRegistry>,
+    ) -> Self {
         Self {
             storage,
             persistence,
+            adapter_registry,
         }
     }
 }
@@ -397,5 +406,110 @@ impl RaceService for RaceServiceImpl {
         } else {
             Err(Status::not_found(format!("Race {} not found", id)))
         }
+    }
+
+    async fn get_system_status(
+        &self,
+        _request: Request<()>,
+    ) -> Result<Response<SystemStatus>, Status> {
+        // Get adapter statuses from registry
+        let adapters = self.adapter_registry.get_all().await;
+        let summary = self.adapter_registry.get_summary().await;
+        
+        // Convert adapter statuses to proto format
+        let mut proto_adapters = Vec::new();
+        for (reg, health) in adapters {
+            // Convert adapter type
+            let adapter_type = match reg.adapter_type {
+                crate::adapter_status::AdapterType::GitLab => ProtoAdapterType::Gitlab as i32,
+                crate::adapter_status::AdapterType::Calendar => ProtoAdapterType::Calendar as i32,
+                crate::adapter_status::AdapterType::CodexWatch => ProtoAdapterType::CodexWatch as i32,
+                crate::adapter_status::AdapterType::GeminiWatch => ProtoAdapterType::GeminiWatch as i32,
+                crate::adapter_status::AdapterType::Claude => ProtoAdapterType::Claude as i32,
+                crate::adapter_status::AdapterType::Cmd => ProtoAdapterType::Cmd as i32,
+            };
+            
+            // Convert health state
+            let state = match health.state {
+                crate::adapter_status::AdapterHealthState::Registered => ProtoHealthState::Registered as i32,
+                crate::adapter_status::AdapterHealthState::Healthy => ProtoHealthState::Healthy as i32,
+                crate::adapter_status::AdapterHealthState::Unhealthy => ProtoHealthState::Unhealthy as i32,
+                crate::adapter_status::AdapterHealthState::Unknown => ProtoHealthState::Unknown as i32,
+                crate::adapter_status::AdapterHealthState::Stopped => ProtoHealthState::Stopped as i32,
+                crate::adapter_status::AdapterHealthState::Exempt => ProtoHealthState::Exempt as i32,
+            };
+            
+            // Convert metrics
+            let metrics = ProtoMetrics {
+                races_created: health.metrics.races_created,
+                races_updated: health.metrics.races_updated,
+                last_activity: health.metrics.last_activity.map(|dt| prost_types::Timestamp {
+                    seconds: dt.timestamp(),
+                    nanos: dt.timestamp_subsec_nanos() as i32,
+                }),
+                error_count: health.metrics.error_count,
+                response_time_ms: health.metrics.response_time_ms.map(|v| v as i64),
+                memory_usage_bytes: health.metrics.memory_usage_bytes,
+                cpu_usage_percent: health.metrics.cpu_usage_percent,
+            };
+            
+            proto_adapters.push(ProtoAdapterStatus {
+                id: reg.id,
+                adapter_type,
+                instance_id: reg.instance_id,
+                display_name: reg.display_name,
+                version: reg.version,
+                state,
+                registered_at: Some(prost_types::Timestamp {
+                    seconds: reg.registered_at.timestamp(),
+                    nanos: reg.registered_at.timestamp_subsec_nanos() as i32,
+                }),
+                last_report: health.last_report.map(|dt| prost_types::Timestamp {
+                    seconds: dt.timestamp(),
+                    nanos: dt.timestamp_subsec_nanos() as i32,
+                }),
+                seconds_since_report: health.seconds_since_report().map(|v| v as i64),
+                health_interval_seconds: reg.health_interval_seconds,
+                metrics: Some(metrics),
+                error: health.error,
+                pid: reg.pid,
+                metadata: reg.metadata,
+            });
+        }
+        
+        // Count states
+        let healthy_count = summary.state_counts.get(&crate::adapter_status::AdapterHealthState::Healthy)
+            .copied().unwrap_or(0) as u32;
+        let unhealthy_count = summary.state_counts.get(&crate::adapter_status::AdapterHealthState::Unhealthy)
+            .copied().unwrap_or(0) as u32;
+        let unknown_count = summary.state_counts.get(&crate::adapter_status::AdapterHealthState::Unknown)
+            .copied().unwrap_or(0) as u32;
+        let stopped_count = summary.state_counts.get(&crate::adapter_status::AdapterHealthState::Stopped)
+            .copied().unwrap_or(0) as u32;
+        let exempt_count = summary.state_counts.get(&crate::adapter_status::AdapterHealthState::Exempt)
+            .copied().unwrap_or(0) as u32;
+        
+        let system_status = SystemStatus {
+            adapters: proto_adapters,
+            total_adapters: summary.total_adapters as u32,
+            healthy_count,
+            unhealthy_count,
+            unknown_count,
+            stopped_count,
+            exempt_count,
+            all_operational: summary.all_operational(),
+            total_races_created: summary.total_races_created,
+            total_races_updated: summary.total_races_updated,
+            last_update: Some(prost_types::Timestamp {
+                seconds: summary.last_update.timestamp(),
+                nanos: summary.last_update.timestamp_subsec_nanos() as i32,
+            }),
+            cpu_usage_percent: None, // TODO: Add server metrics
+            memory_usage_mb: None,
+            active_races: Some(self.storage.get_all_races().await.len() as u64),
+            server_uptime_seconds: None, // TODO: Track server start time
+        };
+        
+        Ok(Response::new(system_status))
     }
 }

@@ -27,6 +27,9 @@ service RaceService {
   
   // Delete a race by ID
   rpc DeleteRace(DeleteRaceRequest) returns (google.protobuf.Empty);
+  
+  // Get system status including all adapter health states
+  rpc GetSystemStatus(google.protobuf.Empty) returns (SystemStatus);
 }
 
 // Represents the state of a race.
@@ -136,4 +139,83 @@ message RaceList {
 // Request for DeleteRace
 message DeleteRaceRequest {
   string id = 1;
+}
+
+// ============================================================================
+// Adapter Status Messages (Push-based model)
+// ============================================================================
+
+// Adapter health states following strict state machine model
+enum AdapterHealthState {
+  ADAPTER_HEALTH_STATE_UNSPECIFIED = 0;
+  ADAPTER_HEALTH_STATE_REGISTERED = 1;  // Registered but no health report yet
+  ADAPTER_HEALTH_STATE_HEALTHY = 2;     // Reporting within 1.5×interval
+  ADAPTER_HEALTH_STATE_UNHEALTHY = 3;   // Missed reports (1.5×-3×interval)
+  ADAPTER_HEALTH_STATE_UNKNOWN = 4;     // No reports for >3×interval
+  ADAPTER_HEALTH_STATE_STOPPED = 5;     // Explicitly deregistered
+  ADAPTER_HEALTH_STATE_EXEMPT = 6;      // Doesn't require health checks (Claude, CMD)
+}
+
+// Adapter types in the system
+enum AdapterType {
+  ADAPTER_TYPE_UNSPECIFIED = 0;
+  ADAPTER_TYPE_GITLAB = 1;
+  ADAPTER_TYPE_CALENDAR = 2;
+  ADAPTER_TYPE_CODEX_WATCH = 3;
+  ADAPTER_TYPE_GEMINI_WATCH = 4;
+  ADAPTER_TYPE_CLAUDE = 5;
+  ADAPTER_TYPE_CMD = 6;
+}
+
+// Adapter metrics from health reports
+message AdapterMetrics {
+  uint64 races_created = 1;
+  uint64 races_updated = 2;
+  optional google.protobuf.Timestamp last_activity = 3;
+  uint64 error_count = 4;
+  optional int64 response_time_ms = 5;
+  optional uint64 memory_usage_bytes = 6;
+  optional float cpu_usage_percent = 7;
+}
+
+// Status of a single adapter (push-based model)
+message AdapterStatus {
+  string id = 1;                                     // "adapter:{type}:{instance}"
+  AdapterType adapter_type = 2;                      // Type of adapter
+  string instance_id = 3;                            // Instance identifier
+  string display_name = 4;                           // UI display name
+  string version = 5;                                // Adapter version
+  AdapterHealthState state = 6;                      // Current health state
+  google.protobuf.Timestamp registered_at = 7;       // Registration time
+  optional google.protobuf.Timestamp last_report = 8; // Last health report
+  optional int64 seconds_since_report = 9;           // Time since last report
+  uint32 health_interval_seconds = 10;               // Expected report interval
+  AdapterMetrics metrics = 11;                       // Metrics from last report
+  optional string error = 12;                        // Error message if unhealthy
+  optional uint32 pid = 13;                          // Process ID if available
+  map<string, string> metadata = 14;                 // Additional metadata
+}
+
+// Overall system status with adapter health
+message SystemStatus {
+  // Adapter statuses (push-based model)
+  repeated AdapterStatus adapters = 1;
+  
+  // Summary statistics
+  uint32 total_adapters = 2;
+  uint32 healthy_count = 3;
+  uint32 unhealthy_count = 4;
+  uint32 unknown_count = 5;
+  uint32 stopped_count = 6;
+  uint32 exempt_count = 7;
+  bool all_operational = 8;                          // True if no unhealthy/unknown
+  uint64 total_races_created = 9;
+  uint64 total_races_updated = 10;
+  google.protobuf.Timestamp last_update = 11;
+  
+  // Server health metrics
+  optional double cpu_usage_percent = 12;
+  optional uint64 memory_usage_mb = 13;
+  optional uint64 active_races = 14;
+  optional int64 server_uptime_seconds = 15;
 }

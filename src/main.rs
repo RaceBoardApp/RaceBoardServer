@@ -1,3 +1,4 @@
+mod adapter_status;
 mod app_state;
 mod cluster;
 mod config;
@@ -236,6 +237,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize data layer metrics
     let data_layer_metrics = Arc::new(monitoring::DataLayerMetrics::new());
 
+    // Initialize adapter registry
+    let adapter_registry = Arc::new(adapter_status::AdapterRegistry::new());
+    log::info!("Adapter registry initialized");
+
+    // Start adapter monitoring background job
+    let monitor = adapter_status::AdapterMonitor::new((*adapter_registry).clone());
+    tokio::spawn(async move {
+        log::info!("Starting adapter health monitoring");
+        monitor.run().await;
+    });
+
     let app_state = AppState {
         storage: storage.clone(),
         prediction_engine: prediction_engine.clone(),
@@ -246,6 +258,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         monitoring: monitoring.clone(),
         alert_system: alert_system.clone(),
         data_layer_metrics: Some(data_layer_metrics.clone()),
+        adapter_registry: adapter_registry.clone(),
         read_only: settings.server.read_only
             || std::env::var("RACEBOARD_READ_ONLY")
                 .ok()
@@ -317,6 +330,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 web::resource("/debug/cluster/{id}")
                     .route(web::get().to(handlers::get_cluster_debug)),
             )
+            // Adapter status endpoints
+            .service(
+                web::resource("/adapter/register")
+                    .route(web::post().to(handlers::adapter_register)),
+            )
+            .service(
+                web::resource("/adapter/health")
+                    .route(web::post().to(handlers::adapter_health)),
+            )
+            .service(
+                web::resource("/adapter/deregister")
+                    .route(web::post().to(handlers::adapter_deregister)),
+            )
+            .service(
+                web::resource("/adapter/status")
+                    .route(web::get().to(handlers::get_adapter_status)),
+            )
+            .service(
+                web::resource("/adapter/metrics")
+                    .route(web::get().to(handlers::get_adapter_metrics)),
+            )
     })
     .bind(http_settings.http_addr())
     .unwrap()
@@ -328,7 +362,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Start gRPC server with graceful shutdown
     let grpc_settings = settings.clone();
-    let grpc_service = RaceServiceImpl::new(storage.clone(), persistence.clone());
+    let grpc_service = RaceServiceImpl::new(storage.clone(), persistence.clone(), adapter_registry.clone());
     let (grpc_shutdown_tx, grpc_shutdown_rx) = tokio::sync::oneshot::channel::<()>();
     let grpc_task = tokio::spawn(async move {
         let addr = grpc_settings.grpc_addr().parse().unwrap();

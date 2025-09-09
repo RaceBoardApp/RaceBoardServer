@@ -1,3 +1,4 @@
+use crate::adapter_status::AdapterRegistry;
 use crate::monitoring::{AlertSystem, DataLayerMetrics, MonitoringSystem};
 use crate::persistence::PersistenceLayer;
 use crate::prediction::PredictionEngine;
@@ -18,5 +19,6 @@ pub struct AppState {
     pub monitoring: Arc<MonitoringSystem>,
     pub alert_system: Arc<AlertSystem>,
     pub data_layer_metrics: Option<Arc<DataLayerMetrics>>,
+    pub adapter_registry: Arc<AdapterRegistry>,
     pub read_only: bool,
 }
