@@ -118,20 +118,20 @@ raceboard-calendar --config calendar_config.toml
 ## 📚 Documentation
 
 ### Getting Started
-- [Server Guide](docs/SERVER_GUIDE.md) - Complete server setup and operation
-- [Configuration](docs/CONFIGURATION.md) - Server and adapter configuration
+- [Server Guide](docs/guides/SERVER_GUIDE.md) - Complete server setup and operation
+- [Configuration](docs/guides/CONFIGURATION.md) - Server and adapter configuration
 - [API Reference](api/openapi.yaml) - OpenAPI specification
 
 ### Adapters
-- [Adapter Development Guide](docs/ADAPTER_DEVELOPMENT_GUIDE.md) - Create custom adapters
-- [GitLab Adapter](docs/GITLAB_ADAPTER_PROPOSAL.md) - GitLab CI integration
-- [Google Calendar](docs/GOOGLE_CALENDAR_ADAPTER.md) - Calendar event tracking
-- [Claude AI](docs/CLAUDE_ADAPTER.md) - AI assistant integration
+- [Adapter Development Guide](docs/adapters/ADAPTER_DEVELOPMENT_GUIDE.md) - Create custom adapters
+- [GitLab Adapter](docs/adapters/GITLAB_ADAPTER.md) - GitLab CI integration
+- [Google Calendar](docs/adapters/GOOGLE_CALENDAR_ADAPTER.md) - Calendar event tracking
+- [Claude AI](docs/adapters/CLAUDE_ADAPTER.md) - AI assistant integration
 
 ### Advanced Features
-- [ETA Prediction System](docs/ETA_PREDICTION_SYSTEM.md) - ML clustering details
-- [Optimistic Progress](docs/OPTIMISTIC_PROGRESS_SUPPORT.md) - Dual-rail visualization
-- [Data Layer](docs/DATA_LAYER_SPECIFICATION.md) - Persistence architecture
+- [ETA Prediction System](docs/design/ETA_PREDICTION_SYSTEM.md) - ML clustering details
+- [Optimistic Progress](docs/specs/OPTIMISTIC_PROGRESS_SUPPORT.md) - Dual-rail visualization
+- [Data Layer](docs/specs/DATA_LAYER_SPECIFICATION.md) - Persistence architecture
 
 ## 🛠️ Development
 
