@@ -2,10 +2,7 @@
 
 Last updated: 2025-09-11
 
-This document specifies the adapter health model and REST API used by the server’s `AdapterRegistry`. It replaces the historical drafts:
-- HEALTH_CHECK_UNIFIED_API.md (race-based approach; superseded)
-- HEALTH_CHECK_SPECIFICATION_V2.md (early REST design)
-- HEALTH_CHECK_DETAILED_SPECIFICATION.md (expanded draft)
+This document specifies the adapter health model and REST API used by the server’s `AdapterRegistry`. It replaces several earlier drafts (now removed) that explored race-based and alternative REST designs.
 
 ## Goals
 - Simple, localhost-only REST for adapters to register, report health, and deregister.
@@ -43,4 +40,3 @@ Security: Bind server to localhost by default; optionally require a shared secre
 ## Notes
 - gRPC adapter RPCs are deprecated; adapters must use REST.
 - UI reads aggregate status via REST or server-side summaries.
-
