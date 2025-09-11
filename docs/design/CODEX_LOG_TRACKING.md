@@ -3,6 +3,7 @@
 Related docs:
 - Server Guide: `../guides/SERVER_GUIDE.md`
 - Configuration & endpoints: `../guides/CONFIGURATION.md`, `api/openapi.yaml`
+- Adapter page: `../adapters/CODEX_WATCH_ADAPTER.md`
 
 ## Discovery
 
