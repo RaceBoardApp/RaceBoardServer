@@ -1,0 +1,37 @@
+# Google Calendar Adapter Configuration Template for UI
+
+[google]
+# Credentials will be stored in Keychain after OAuth flow
+client_id = ""
+client_secret = ""
+# Token will be managed by UI OAuth flow
+token_file = ""
+
+[server]
+# Will be set by UI based on actual server port
+url = "http://127.0.0.1:7777"
+
+[sync]
+interval_seconds = 60
+lookahead_hours = 24
+
+[filters]
+# User can configure which calendars to sync
+calendars = []
+exclude_all_day = true
+exclude_declined = true
+
+[working_hours]
+enabled = true
+start_hour = 9
+end_hour = 17
+timezone = "America/New_York"
+
+[focus_time]
+enabled = true
+keywords = ["Focus", "Deep Work", "Heads Down"]
+
+[logging]
+level = "info"
+# Log path will be set by UI to App Group container
+file = ""

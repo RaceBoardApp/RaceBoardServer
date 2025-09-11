@@ -67,9 +67,18 @@ During maintenance operations, the server may enter a read‑only mode. Clients 
 - HTTP 503 with header `X-Raceboard-Read-Only: 1` on write endpoints.
 - Adapters should retry later (the calendar adapter already does this).
 
+## Security & Local Deployment
+- Current assumption: All components (server and adapters) run on the same machine and communicate over localhost (127.0.0.1). No authentication is implemented on HTTP/gRPC endpoints.
+- Do NOT expose the server directly to untrusted networks. If you must, front it with a reverse proxy that enforces authentication and IP allow-lists.
+- Recommended if exposing beyond localhost:
+  - Keep server bindings on 127.0.0.1 and use a reverse proxy (Nginx/Caddy/Traefik) to terminate TLS and enforce auth (Basic/OIDC) and network policies.
+  - Consider mTLS or signed tokens for adapter-to-server calls in multi-host deployments.
+  - Protect admin endpoints (/admin/*, /metrics/*) with auth and rate limits.
+
 ## API Surfaces
+- Protocol strategy: UI clients use gRPC (read-only, streaming); Adapters use REST (writes and health).
 - HTTP: `api/openapi.yaml` is the source of truth for request/response shapes.
-- gRPC: `grpc/race.proto` defines streaming update messages for UI clients.
+- gRPC: `grpc/race.proto` defines streaming update messages for UI clients and is read-only for UI/ops. Adapter-oriented gRPC RPCs are deprecated.
 
 ### Additional HTTP Endpoints
 These are primarily diagnostics/admin surfaces exposed by the server:
@@ -95,7 +104,9 @@ RUST_LOG=debug,hyper=warn,tower=warn cargo run --bin raceboard-server
 ```
 
 ## Adapters
-Adapters are independent binaries that POST to the server HTTP API. Selected docs:
+Adapters are independent binaries that POST to the server HTTP API. Adapters must use REST for all writes and health reporting; gRPC is reserved for UI/ops and adapter-oriented gRPC RPCs are deprecated. Note: Race endpoints (/race, /race/{id}, /race/{id}/event) explicitly reject adapter:* IDs; adapters must use /adapter/register, /adapter/health, and /adapter/deregister for lifecycle and health.
+
+Selected docs:
 - Codex log watcher: `src/bin/raceboard_codex_watch.rs` (see `docs/CODEX_LOG_TRACKING.md`)
 - Google/ICS calendar free‑time: `src/bin/raceboard_calendar.rs` (see `docs/GOOGLE_CALENDAR_ADAPTER.md`)
 - Shell runner and others: see `docs/ADAPTER_DEVELOPMENT_GUIDE.md`

@@ -236,3 +236,16 @@ impl Event {
         }
     }
 }
+
+// Centralized adapter ID check: "adapter:{type}:{instance}"
+pub fn is_adapter_id(id: &str) -> bool {
+    if let Some(rest) = id.strip_prefix("adapter:") {
+        let mut parts = rest.splitn(2, ':');
+        if let (Some(t), Some(inst)) = (parts.next(), parts.next()) {
+            let type_ok = !t.is_empty() && t.len() <= 64 && t.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-');
+            let inst_ok = !inst.is_empty() && inst.len() <= 64 && inst.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
+            return type_ok && inst_ok;
+        }
+    }
+    false
+}

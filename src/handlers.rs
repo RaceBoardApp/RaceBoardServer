@@ -3,6 +3,7 @@ use crate::{
     app_state::AppState,
     models::{Event, Race, RaceState, RaceUpdate},
     processing::RaceProcessingRequest,
+    adapter_status::{AdapterRegistration, AdapterType, AdapterMetrics},
 };
 use actix_web::http::StatusCode;
 use actix_web::{web, HttpResponse, Result};
@@ -23,14 +24,16 @@ pub async fn create_race(race: web::Json<Race>, data: web::Data<AppState>) -> Re
     }
     let mut race = race.into_inner();
 
-    // Infer ETA source and confidence if not provided
-    if race.eta_source.is_none() && race.eta_sec.is_some() {
-        race.eta_source = Some(match race.source.as_str() {
-            "google-calendar" => 1, // EtaSource::Exact
-            "gitlab" | "github" | "jenkins" => 2, // EtaSource::Adapter
-            _ => 2, // Default to Adapter
-        });
+    // Reject adapter registrations via race endpoint — use dedicated adapter endpoints
+    if crate::models::is_adapter_id(&race.id) {
+        return Ok(HttpResponse::BadRequest().json(json!({
+            "error": "invalid_operation",
+            "message": "Adapter registration must use REST /adapter/register and /adapter/health endpoints, not /race"
+        })));
     }
+
+    // Centralized inference for ETA fields
+    race.infer_eta_source();
 
     // Only predict ETA if not already provided by the adapter
     if race.eta_sec.is_none() {
@@ -45,27 +48,8 @@ pub async fn create_race(race: web::Json<Race>, data: web::Data<AppState>) -> Re
         race.eta_confidence = Some(0.7); // Cluster predictions have 70% confidence
     }
 
-    // Infer confidence based on source if not set
-    if race.eta_confidence.is_none() && race.eta_source.is_some() {
-        race.eta_confidence = Some(match race.eta_source.unwrap() {
-            1 => 1.0,   // Exact
-            3 => 0.7,   // Cluster
-            2 => 0.5,   // Adapter
-            4 => 0.2,   // Bootstrap
-            _ => 0.3,
-        });
-    }
-
-    // Infer update_interval_hint based on source if not set
-    if race.update_interval_hint.is_none() && race.eta_source.is_some() {
-        race.update_interval_hint = Some(match race.eta_source.unwrap() {
-            1 => 60,    // Exact: 60s
-            2 => 10,    // Adapter: 10s
-            3 => 15,    // Cluster: 15s
-            4 => 10,    // Bootstrap: 10s
-            _ => 10,
-        });
-    }
+    race.infer_eta_confidence();
+    race.infer_update_interval_hint();
 
     // Store the race in memory (UI/gRPC hot path only; no persistence at creation)
     let race = data.storage.create_or_update_race(race).await;
@@ -96,6 +80,15 @@ pub async fn update_race(
             .json(json!({"error":"read_only","message":"Server is in read-only mode"})));
     }
     let id = path.into_inner();
+    
+    // Reject adapter race updates — use dedicated REST adapter endpoints instead
+    if crate::models::is_adapter_id(&id) {
+        return Ok(HttpResponse::BadRequest().json(json!({
+            "error": "invalid_operation",
+            "message": "Adapter registration/health must use REST /adapter/register and /adapter/health endpoints, not /race/{id}"
+        })));
+    }
+    
     let update = race_update.into_inner();
 
     // If race is completing, calculate duration and update stats
@@ -125,6 +118,7 @@ pub async fn update_race(
         }
     }
 
+
     match data.storage.update_race(&id, update).await {
         Some(race) => {
             // Persist completed races only (historical store)
@@ -144,26 +138,52 @@ pub async fn update_race(
                 } else {
                     log::warn!("HANDLER: Successfully persisted race {} to sled", race.id);
                 }
-                // Transitional: also update legacy JSON for visibility until full sled migration is stable
-                let mut path = dirs::home_dir().unwrap_or_else(|| std::path::PathBuf::from("."));
-                path.push(".raceboard");
-                let _ = std::fs::create_dir_all(&path);
-                path.push("races.json");
-                let mut races: Vec<Race> = if path.exists() {
-                    std::fs::read_to_string(&path)
-                        .ok()
-                        .and_then(|s| serde_json::from_str(&s).ok())
-                        .unwrap_or_default()
+                // Transitional: legacy JSON fallback (gated by config)
+                if data.legacy_json_fallback_enabled {
+                    log::warn!("Legacy JSON fallback enabled: writing ~/.raceboard/races.json (see server.legacy_json_fallback_enabled)");
+                    let mut path = dirs::home_dir().unwrap_or_else(|| std::path::PathBuf::from("."));
+                    path.push(".raceboard");
+                    let _ = std::fs::create_dir_all(&path);
+                    path.push("races.json");
+                    let mut races: Vec<Race> = if path.exists() {
+                        std::fs::read_to_string(&path)
+                            .ok()
+                            .and_then(|s| serde_json::from_str(&s).ok())
+                            .unwrap_or_default()
+                    } else {
+                        Vec::new()
+                    };
+                    if let Some(existing) = races.iter_mut().find(|r| r.id == race.id) {
+                        *existing = race.clone();
+                    } else {
+                        races.push(race.clone());
+                    }
+                    if let Ok(json) = serde_json::to_string_pretty(&races) {
+                        let _ = std::fs::write(&path, json);
+                    }
                 } else {
-                    Vec::new()
-                };
-                if let Some(existing) = races.iter_mut().find(|r| r.id == race.id) {
-                    *existing = race.clone();
-                } else {
-                    races.push(race.clone());
-                }
-                if let Ok(json) = serde_json::to_string_pretty(&races) {
-                    let _ = std::fs::write(&path, json);
+                    // When disabled, write a backup file for operators (best-effort)
+                    let mut path = dirs::home_dir().unwrap_or_else(|| std::path::PathBuf::from("."));
+                    path.push(".raceboard");
+                    let _ = std::fs::create_dir_all(&path);
+                    path.push("races.json.bak");
+                    let mut races: Vec<Race> = if path.exists() {
+                        std::fs::read_to_string(&path)
+                            .ok()
+                            .and_then(|s| serde_json::from_str(&s).ok())
+                            .unwrap_or_default()
+                    } else {
+                        Vec::new()
+                    };
+                    if let Some(existing) = races.iter_mut().find(|r| r.id == race.id) {
+                        *existing = race.clone();
+                    } else {
+                        races.push(race.clone());
+                    }
+                    if let Ok(json) = serde_json::to_string_pretty(&races) {
+                        let _ = std::fs::write(&path, json);
+                        log::info!("Wrote backup to ~/.raceboard/races.json.bak (legacy JSON fallback disabled)");
+                    }
                 }
             }
             Ok(HttpResponse::Ok().json(race))
@@ -400,38 +420,41 @@ pub async fn get_historic_races(
         Ok(b) => b,
         Err(e) => {
             eprintln!("Failed to scan historic races from persistence: {}", e);
-            // Transitional fallback: legacy JSON
-            let mut path = dirs::home_dir().unwrap_or_else(|| std::path::PathBuf::from("."));
-            path.push(".raceboard");
-            path.push("races.json");
-            if path.exists() {
-                if let Ok(contents) = std::fs::read_to_string(&path) {
-                    if let Ok(mut races) = serde_json::from_str::<Vec<Race>>(&contents) {
-                        // Naive filter + truncate for fallback
-                        races.retain(|r| {
-                            if let Some(ref src) = query.source {
-                                if &r.source != src {
-                                    return false;
+            // Transitional fallback: legacy JSON (gated)
+            if data.legacy_json_fallback_enabled {
+                log::warn!("Historic scan failed; using legacy JSON fallback (enable/disable via server.legacy_json_fallback_enabled)");
+                let mut path = dirs::home_dir().unwrap_or_else(|| std::path::PathBuf::from("."));
+                path.push(".raceboard");
+                path.push("races.json");
+                if path.exists() {
+                    if let Ok(contents) = std::fs::read_to_string(&path) {
+                        if let Ok(mut races) = serde_json::from_str::<Vec<Race>>(&contents) {
+                            // Naive filter + truncate for fallback
+                            races.retain(|r| {
+                                if let Some(ref src) = query.source {
+                                    if &r.source != src {
+                                        return false;
+                                    }
                                 }
-                            }
-                            if let Some(from) = query.from {
-                                if r.started_at < from {
-                                    return false;
+                                if let Some(from) = query.from {
+                                    if r.started_at < from {
+                                        return false;
+                                    }
                                 }
-                            }
-                            if let Some(to) = query.to {
-                                if r.started_at > to {
-                                    return false;
+                                if let Some(to) = query.to {
+                                    if r.started_at > to {
+                                        return false;
+                                    }
                                 }
-                            }
-                            true
-                        });
-                        races.sort_by(|a, b| a.started_at.cmp(&b.started_at));
-                        races.truncate(limit);
-                        return Ok(HttpResponse::Ok().json(json!({
-                            "items": races,
-                            "next_cursor": null,
-                        })));
+                                true
+                            });
+                            races.sort_by(|a, b| a.started_at.cmp(&b.started_at));
+                            races.truncate(limit);
+                            return Ok(HttpResponse::Ok().json(json!({
+                                "items": races,
+                                "next_cursor": null,
+                            })));
+                        }
                     }
                 }
             }
@@ -442,8 +465,8 @@ pub async fn get_historic_races(
         }
     };
 
-    // If empty and first page, try legacy JSON fallback once
-    if batch.items.is_empty() && query.cursor.is_none() {
+    // If empty and first page, try legacy JSON fallback once (gated)
+    if batch.items.is_empty() && query.cursor.is_none() && data.legacy_json_fallback_enabled {
         let mut path = dirs::home_dir().unwrap_or_else(|| std::path::PathBuf::from("."));
         path.push(".raceboard");
         path.push("races.json");
@@ -451,7 +474,7 @@ pub async fn get_historic_races(
             if let Ok(contents) = std::fs::read_to_string(&path) {
                 if let Ok(json_races) = serde_json::from_str::<Vec<Race>>(&contents) {
                     log::warn!(
-                        "Historic: sled empty; returning {} races from JSON fallback",
+                        "Historic: sled empty; returning {} races from JSON fallback (enable/disable via server.legacy_json_fallback_enabled)",
                         json_races.len()
                     );
                     return Ok(HttpResponse::Ok().json(json!({
@@ -878,8 +901,6 @@ pub async fn get_cluster_debug(
 // ============================================================================
 // Adapter Status Handlers
 // ============================================================================
-
-use crate::adapter_status::{AdapterRegistration, AdapterMetrics};
 
 /// Register an adapter (self-registration)
 pub async fn adapter_register(

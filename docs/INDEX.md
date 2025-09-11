@@ -3,6 +3,8 @@
 Start here for an overview, then dive into specific areas.
 
 - Server Guide: `docs/SERVER_GUIDE.md`
+- Protocol strategy (gRPC for UI, REST for adapters): `docs/PROTOCOL_STRATEGY.md`
+- Architecture assessment and critique: `docs/ARCHITECTURE_REVIEW.md`
 - Configuration reference: `docs/CONFIGURATION.md`
 - Data layer and persistence: `docs/DATA_LAYER_SPECIFICATION.md`
 - ETA prediction system: `docs/ETA_PREDICTION_SYSTEM.md`
@@ -14,4 +16,5 @@ Start here for an overview, then dive into specific areas.
 - API surfaces:
   - HTTP OpenAPI: `api/openapi.yaml`
   - gRPC schema: `grpc/race.proto`
+- Security posture: `docs/SECURITY.md`
 

@@ -13,6 +13,16 @@ grpc_port = 50051
 level = "info"
 ```
 
+## Server Settings
+
+Available keys in [server] table:
+- http_host (string) — default: 127.0.0.1
+- http_port (u16) — default: 7777
+- grpc_host (string) — default: 127.0.0.1
+- grpc_port (u16) — default: 50051
+- read_only (bool) — default: false; if true, all mutating endpoints (HTTP and gRPC) are disabled.
+- legacy_json_fallback_enabled (bool) — default: true; gates legacy ~/.raceboard/races.json fallback reads and writes. When false, handlers skip legacy JSON and only use sled (a backup is still written to ~/.raceboard/races.json.bak on completion events).
+
 ## Environment Overrides
 Use the `RACEBOARD_` prefix and a double underscore (`__`) between table and key names.
 

@@ -30,12 +30,12 @@ impl Storage {
         let (event_sender, _) = broadcast::channel(100);
         let races = HashMap::new();
 
-        log::warn!(
+        log::info!(
             "Storage initialized with max_races={}, max_events_per_race={}",
             max_races,
             max_events_per_race
         );
-        log::warn!(
+        log::info!(
             "CRITICAL: Ensure persistence layer is properly configured for cluster rebuilding"
         );
 
@@ -56,8 +56,8 @@ impl Storage {
 
         // Check if we need to make room
         if races.len() >= self.max_races && !races.contains_key(&race.id) {
-            // CRITICAL: Log when we're at capacity - this affects cluster rebuilding!
-            log::error!("STORAGE CAPACITY REACHED: {} races. Removing oldest race. This will impact cluster rebuilding!", races.len());
+            // Capacity reached: this is a recoverable operational condition
+            log::warn!("storage_capacity_reached current_races={} action=evict_oldest", races.len());
 
             // Find and remove the oldest race by started_at timestamp
             if let Some((oldest_id, _)) = races.iter().min_by_key(|(_, r)| r.started_at) {
@@ -96,6 +96,12 @@ impl Storage {
             StorageEvent::Created(race.clone())
         };
         let _ = self.event_sender.send(event);
+        log::debug!(
+            "race_upsert ok race_id={} is_update={} state={:?}",
+            race.id,
+            is_update,
+            race.state
+        );
 
         race
     }
@@ -119,6 +125,11 @@ impl Storage {
             let _ = self
                 .event_sender
                 .send(StorageEvent::Updated(updated.clone()));
+            log::debug!(
+                "race_update ok race_id={} state={:?}",
+                updated.id,
+                updated.state
+            );
 
             Some(updated)
         } else {
@@ -133,6 +144,11 @@ impl Storage {
             // Limit events
             if let Some(ref events) = race.events {
                 if events.len() >= self.max_events_per_race {
+                    log::info!(
+                        "event_cap_reached race_id={} max_events={}",
+                        id,
+                        self.max_events_per_race
+                    );
                     return Some(race.clone());
                 }
             }
@@ -142,6 +158,11 @@ impl Storage {
             let _ = self
                 .event_sender
                 .send(StorageEvent::Updated(updated.clone()));
+            log::debug!(
+                "race_event added race_id={} event_count={}",
+                updated.id,
+                updated.events.as_ref().map(|e| e.len()).unwrap_or(0)
+            );
 
             Some(updated)
         } else {

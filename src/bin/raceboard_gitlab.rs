@@ -13,7 +13,8 @@ use tokio::signal;
 
 // Import shared types and client from adapter_common
 use RaceboardServer::adapter_common::{
-    Race, RaceState, RaceUpdate, RaceboardClient, ServerConfig
+    Race, RaceState, RaceUpdate, RaceboardClient, ServerConfig,
+    AdapterType, AdapterHealthMonitor
 };
 
 // GitLab API timeout - separate from Raceboard client timeout
@@ -1125,10 +1126,30 @@ async fn main() -> Result<()> {
     let raceboard_client = RaceboardClient::new(config.raceboard.server.clone())
         .context("Failed to create Raceboard client")?;
     
+    // Create and register health monitor
+    let instance_id = format!("gitlab-{}", std::process::id());
+    let mut health_monitor = AdapterHealthMonitor::new(
+        raceboard_client.clone(),
+        AdapterType::GitLab,
+        instance_id.clone(),
+        60, // Report health every 60 seconds
+    ).await.context("Failed to create health monitor")?;
+    
+    log::info!("Registering adapter with Raceboard server...");
+    health_monitor.register().await
+        .context("Failed to register adapter with server")?;
+    log::info!("Adapter registered successfully as: adapter:gitlab:{}", instance_id);
+    
+    // Start automatic health reporting
+    let health_monitor_clone = health_monitor.clone();
+    let health_report_handle = tokio::spawn(async move {
+        health_monitor_clone.start_health_reporting().await;
+    });
+    
     let mut state = load_state();
     log::info!("State loaded. Last sync: {}", state.last_sync);
     
-    // Start health check server
+    // Start health check server (keeping for backward compatibility)
     let metrics_clone = metrics.clone();
     let health_server = start_health_server(metrics_clone).await;
     let health_handle = tokio::spawn(health_server);
@@ -1274,6 +1295,18 @@ async fn main() -> Result<()> {
     }
     
     log::info!("GitLab adapter shutting down gracefully");
+    
+    // Stop health reporting
+    health_report_handle.abort();
+    log::info!("Health reporting stopped");
+    
+    // Deregister from server
+    log::info!("Deregistering adapter from server...");
+    if let Err(e) = health_monitor.deregister().await {
+        log::error!("Failed to deregister adapter: {}", e);
+    } else {
+        log::info!("Adapter deregistered successfully");
+    }
     
     // Stop the health check server
     health_handle.abort();

@@ -15,6 +15,7 @@ pub struct ServerConfig {
     pub grpc_port: u16,
     pub grpc_host: String,
     pub read_only: bool,
+    pub legacy_json_fallback_enabled: bool,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -37,6 +38,7 @@ impl Settings {
             .set_default("server.grpc_port", 50051)?
             .set_default("server.grpc_host", "127.0.0.1")?
             .set_default("server.read_only", false)?
+            .set_default("server.legacy_json_fallback_enabled", true)?
             .set_default("logging.level", "info")?
             .set_default("storage.max_races", 1000)?
             .set_default("storage.max_events_per_race", 100)?

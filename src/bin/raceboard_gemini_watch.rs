@@ -3,7 +3,10 @@ use chrono::Utc;
 use clap::Parser;
 use env_logger;
 use log::{debug, info, warn};
-use reqwest::Client;
+use RaceboardServer::adapter_common::{
+    RaceboardClient, Race, RaceState, RaceUpdate, Event, ServerConfig,
+    AdapterType, AdapterHealthMonitor
+};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
@@ -13,48 +16,7 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 use uuid::Uuid;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-enum RaceState {
-    Queued,
-    Running,
-    Passed,
-    Failed,
-    Canceled,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct Race {
-    id: String,
-    source: String,
-    title: String,
-    state: RaceState,
-    started_at: String,
-    eta_sec: Option<i64>,
-    progress: Option<i32>,
-    deeplink: Option<String>,
-    metadata: Option<HashMap<String, String>>,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct RaceCreated {
-    id: String,
-}
-
-#[derive(Debug, Serialize)]
-struct RaceUpdate {
-    state: Option<RaceState>,
-    progress: Option<i32>,
-    eta_sec: Option<i64>,
-    metadata: Option<HashMap<String, String>>,
-}
-
-#[derive(Debug, Serialize)]
-struct Event {
-    #[serde(rename = "type")]
-    event_type: String,
-    data: Option<Value>,
-}
+// Race, RaceState, RaceUpdate, and Event are now imported from adapter_common
 
 #[derive(Parser, Debug, Clone)]
 #[command(author, version, about = "Gemini CLI telemetry adapter for Raceboard")]
@@ -125,8 +87,7 @@ impl Session {
 }
 
 pub struct GeminiWatcher {
-    client: Client,
-    server_url: String,
+    client: RaceboardClient,
     telemetry_path: PathBuf,
     last_position: u64,
     current: Option<Session>,
@@ -139,15 +100,14 @@ pub struct GeminiWatcher {
 
 impl GeminiWatcher {
     pub fn new(
-        server_url: String,
+        server_config: ServerConfig,
         telemetry_path: PathBuf,
         no_events: bool,
         eta_hint: Option<i64>,
         debug: bool,
-    ) -> Self {
-        Self {
-            client: Client::new(),
-            server_url,
+    ) -> Result<Self> {
+        Ok(Self {
+            client: RaceboardClient::new(server_config)?,
             telemetry_path,
             last_position: 0,
             current: None,
@@ -156,7 +116,7 @@ impl GeminiWatcher {
             no_events,
             eta_hint,
             debug,
-        }
+        })
     }
 
     pub fn seek_to_end(&mut self) -> Result<()> {
@@ -172,38 +132,21 @@ impl GeminiWatcher {
         &self,
         title: String,
         meta: HashMap<String, String>,
-    ) -> Result<RaceCreated> {
+    ) -> Result<Race> {
         let race = Race {
             id: Uuid::new_v4().to_string(),
             source: "gemini-cli".to_string(),
             title,
             state: RaceState::Running,
-            started_at: Utc::now().to_rfc3339(),
+            started_at: Utc::now(),
             eta_sec: self.eta_hint,
             progress: Some(0),
             deeplink: None,
             metadata: Some(meta),
         };
 
-        debug!("POST {}/race", self.server_url);
-        let resp = self
-            .client
-            .post(format!("{}/race", self.server_url))
-            .json(&race)
-            .send()
-            .await
-            .context("Failed to create race")?;
-
-        if !resp.status().is_success() {
-            anyhow::bail!("Create race HTTP {}", resp.status());
-        }
-
-        let created = resp
-            .json::<Race>()
-            .await
-            .context("Parse create race response")?;
-
-        Ok(RaceCreated { id: created.id })
+        debug!("Creating race: {}", race.id);
+        self.client.create_race(&race).await.context("Failed to create race")
     }
 
     async fn update_progress(
@@ -217,22 +160,10 @@ impl GeminiWatcher {
             progress: Some(progress),
             eta_sec: None,
             metadata: extra,
+            deeplink: None,
         };
-        debug!(
-            "PATCH {}/race/{} progress={}",
-            self.server_url, race_id, progress
-        );
-        let resp = self
-            .client
-            .patch(format!("{}/race/{}", self.server_url, race_id))
-            .json(&update)
-            .send()
-            .await
-            .context("Failed to update race")?;
-        if !resp.status().is_success() {
-            warn!("Update progress HTTP {}", resp.status());
-        }
-        Ok(())
+        debug!("Updating race {} progress={}", race_id, progress);
+        self.client.update_race(race_id, &update).await.context("Failed to update race progress")
     }
 
     async fn complete(
@@ -250,22 +181,10 @@ impl GeminiWatcher {
             progress: Some(100),
             eta_sec: Some(0),
             metadata: extra,
+            deeplink: None,
         };
-        debug!(
-            "PATCH {}/race/{} complete success={}",
-            self.server_url, race_id, success
-        );
-        let resp = self
-            .client
-            .patch(format!("{}/race/{}", self.server_url, race_id))
-            .json(&update)
-            .send()
-            .await
-            .context("Failed to complete race")?;
-        if !resp.status().is_success() {
-            warn!("Complete race HTTP {}", resp.status());
-        }
-        Ok(())
+        debug!("Completing race {} success={}", race_id, success);
+        self.client.update_race(race_id, &update).await.context("Failed to complete race")
     }
 
     async fn post_event(&self, race_id: &str, event_type: &str, data: Option<Value>) -> Result<()> {
@@ -274,23 +193,11 @@ impl GeminiWatcher {
         }
         let evt = Event {
             event_type: event_type.to_string(),
+            timestamp: Utc::now(),
             data,
         };
-        debug!(
-            "POST {}/race/{}/event {}",
-            self.server_url, race_id, event_type
-        );
-        let resp = self
-            .client
-            .post(format!("{}/race/{}/event", self.server_url, race_id))
-            .json(&evt)
-            .send()
-            .await
-            .context("Failed to post event")?;
-        if !resp.status().is_success() {
-            warn!("Post event HTTP {}", resp.status());
-        }
-        Ok(())
+        debug!("Adding event to race {} type={}", race_id, event_type);
+        self.client.add_event(race_id, &evt).await.context("Failed to post event")
     }
 
     pub async fn watch(&mut self, poll_ms: u64) -> Result<()> {
@@ -305,7 +212,7 @@ impl GeminiWatcher {
             "👀 Tailing Gemini telemetry: {}",
             self.telemetry_path.display()
         );
-        info!("Server: {}", self.server_url);
+        // Server info is logged by the RaceboardClient
 
         loop {
             self.read_new_lines().await?;
@@ -728,19 +635,47 @@ async fn main() -> Result<()> {
             .join(".gemini/telemetry.log")
     };
 
-    // Basic health check (non-fatal)
-    match reqwest::get(format!("{}/health", args.server)).await {
-        Ok(resp) => debug!("/health status: {}", resp.status()),
-        Err(e) => warn!("Health check failed: {}", e),
-    }
-
+    let server_config = ServerConfig {
+        url: args.server.clone(),
+        ..Default::default()
+    };
+    
+    // Create raceboard client for health monitor
+    let raceboard_client = RaceboardClient::new(server_config.clone())
+        .context("Failed to create raceboard client")?;
+    
+    // Create and register health monitor
+    let instance_id = format!("gemini-watch-{}", std::process::id());
+    let mut health_monitor = AdapterHealthMonitor::new(
+        raceboard_client.clone(),
+        AdapterType::GeminiWatch,
+        instance_id.clone(),
+        60, // Report health every 60 seconds
+    ).await.context("Failed to create health monitor")?;
+    
+    info!("Registering gemini-watch adapter with Raceboard server...");
+    health_monitor.register().await
+        .context("Failed to register adapter with server")?;
+    info!("Adapter registered successfully as: adapter:gemini-watch:{}", instance_id);
+    
+    // Start automatic health reporting
+    let _health_report_handle = tokio::spawn(async move {
+        health_monitor.clone().start_health_reporting().await;
+    });
+    
     let mut watcher = GeminiWatcher::new(
-        args.server,
+        server_config,
         telemetry_path,
         args.no_events,
         args.eta,
         args.debug,
-    );
+    )?;
+    
+    // Basic health check (non-fatal)
+    match watcher.client.health_check().await {
+        Ok(true) => debug!("/health status: OK"),
+        Ok(false) | Err(_) => warn!("Health check failed"),
+    }
     if !args.from_start {
         watcher.seek_to_end()?;
     }

@@ -40,6 +40,9 @@ mod tests {
             progress: Some(50),
             deeplink: None,
             metadata: None,
+            eta_source: None,
+            eta_confidence: None,
+            update_interval_hint: None,
         };
 
         let updated = storage.update_race(&created.id, update).await;

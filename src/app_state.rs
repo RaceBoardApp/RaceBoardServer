@@ -18,7 +18,8 @@ pub struct AppState {
     pub persistence: Arc<PersistenceLayer>,
     pub monitoring: Arc<MonitoringSystem>,
     pub alert_system: Arc<AlertSystem>,
-    pub data_layer_metrics: Option<Arc<DataLayerMetrics>>,
+    pub data_layer_metrics: Option<Arc<DataLayerMetrics>>, 
     pub adapter_registry: Arc<AdapterRegistry>,
     pub read_only: bool,
+    pub legacy_json_fallback_enabled: bool,
 }

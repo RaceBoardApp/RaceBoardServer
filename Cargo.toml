@@ -88,3 +88,6 @@ ical = "0.10"
 
 [build-dependencies]
 tonic-build = "0.11"
+
+[dev-dependencies]
+mockito = "0.31"

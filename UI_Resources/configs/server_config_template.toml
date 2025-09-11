@@ -1,0 +1,35 @@
+# Raceboard Server Configuration Template for UI
+# This template is used by the UI to provision the server on first launch
+
+[server]
+http_host = "127.0.0.1"
+http_port = 7777
+grpc_host = "127.0.0.1"
+grpc_port = 50051
+
+[persistence]
+# Path will be overridden by UI to point to App Group container
+# Default: ~/Library/Group Containers/<teamid>.raceboard/eta_history.db
+path = ""
+
+[logging]
+level = "info"
+# Log path will be set by UI to App Group container
+# Default: ~/Library/Group Containers/<teamid>.raceboard/logs/server.log
+file = ""
+
+[features]
+enable_clustering = true
+enable_predictions = true
+enable_optimistic_progress = true
+
+[rebuild]
+enabled = true
+check_interval_seconds = 3600
+min_races_for_rebuild = 100
+
+[phased_rollout]
+enabled = true
+phase_1_duration_hours = 24
+phase_2_duration_hours = 48
+phase_3_duration_hours = 72

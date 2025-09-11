@@ -9,7 +9,7 @@ This guide provides everything you need to know to build your own custom adapter
 
 ## 1. Introduction
 
-(No changes)
+Adapters integrate external systems into Raceboard. Protocol strategy: adapters must use the REST API exclusively for all writes and health reporting. gRPC is reserved for UI/ops read-only access and streaming and should not be used by adapters. Any adapter-oriented gRPC RPCs are deprecated and slated for removal.
 
 ## 2. Getting Started: Your First Adapter
 

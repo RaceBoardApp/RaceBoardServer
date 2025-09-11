@@ -1,0 +1,20 @@
+# GitLab Adapter Configuration Template for UI
+
+[gitlab]
+# Host will be provided by user during onboarding
+host = ""
+# Token will be stored in Keychain, not in this file
+token = ""
+
+[server]
+# Will be set by UI based on actual server port
+url = "http://127.0.0.1:7777"
+
+[sync]
+interval_seconds = 30
+max_pipelines = 100
+
+[logging]
+level = "info"
+# Log path will be set by UI to App Group container
+file = ""

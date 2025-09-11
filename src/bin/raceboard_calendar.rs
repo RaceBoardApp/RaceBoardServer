@@ -4,45 +4,18 @@ use clap::Parser;
 use google_calendar3 as gcal;
 use hyper::client::HttpConnector;
 use hyper_rustls::HttpsConnector;
-use reqwest::Client;
-use serde::{Deserialize, Serialize};
+use RaceboardServer::adapter_common::{
+    load_config_file, RaceboardClient, Race, RaceState, RaceUpdate, ServerConfig,
+    AdapterType, AdapterHealthMonitor
+};
+use serde::Deserialize;
 use std::collections::HashMap;
-use std::fs;
 use std::path::PathBuf;
 use std::time::Duration as StdDuration;
 use tokio::time::interval;
 use yup_oauth2 as oauth2;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-enum RaceState {
-    Queued,
-    Running,
-    Passed,
-    Failed,
-    Canceled,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct Race {
-    id: String,
-    source: String,
-    title: String,
-    state: RaceState,
-    started_at: String,
-    eta_sec: Option<i64>,
-    progress: Option<i32>,
-    deeplink: Option<String>,
-    metadata: Option<HashMap<String, serde_json::Value>>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-struct RaceUpdate {
-    state: Option<RaceState>,
-    progress: Option<i32>,
-    eta_sec: Option<i64>,
-    metadata: Option<HashMap<String, serde_json::Value>>,
-}
+// Race, RaceState, and RaceUpdate are now imported from adapter_common
 
 #[derive(Parser, Debug)]
 #[command(author, version, about = "Raceboard Google Calendar free-time adapter")]
@@ -92,18 +65,13 @@ struct FiltersCfg {
 
 #[derive(Debug, Clone, Deserialize)]
 struct AppConfig {
-    raceboard: Option<RaceboardCfg>,
+    raceboard: Option<ServerConfig>,
     sync: Option<SyncCfg>,
     filters: Option<FiltersCfg>,
     working_hours: Option<WorkingHoursCfg>,
     focus_time: Option<FocusTimeCfg>,
     google: Option<GoogleCfg>,
     ics: Option<IcsCfg>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-struct RaceboardCfg {
-    server_url: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -119,7 +87,7 @@ struct IcsCfg {
 
 #[derive(Debug, Clone)]
 struct EffectiveCfg {
-    server_url: String,
+    server_config: ServerConfig,
     poll_interval: StdDuration,
     work_start: NaiveTime,
     work_end: NaiveTime,
@@ -133,11 +101,13 @@ struct EffectiveCfg {
 
 impl EffectiveCfg {
     fn from_args_config(args: &Args, file: Option<AppConfig>) -> Self {
-        let server_url = file
+        let server_config = file
             .as_ref()
-            .and_then(|c| c.raceboard.as_ref())
-            .and_then(|r| r.server_url.clone())
-            .unwrap_or_else(|| args.server.clone());
+            .and_then(|c| c.raceboard.clone())
+            .unwrap_or_else(|| ServerConfig {
+                url: args.server.clone(),
+                ..Default::default()
+            });
 
         let poll_secs = file
             .as_ref()
@@ -169,7 +139,7 @@ impl EffectiveCfg {
             .unwrap_or_else(|| vec!["Focus".to_string(), "Deep work".to_string()]);
 
         Self {
-            server_url,
+            server_config,
             poll_interval: StdDuration::from_secs(poll_secs),
             work_start,
             work_end,
@@ -242,21 +212,42 @@ async fn main() -> Result<()> {
     if args.debug {
         std::env::set_var("RUST_LOG", "info");
     }
+    env_logger::init();
 
     let cfg = if let Some(path) = args.config.as_ref() {
-        let txt = fs::read_to_string(path).context("reading config")?;
-        let f: AppConfig = toml::from_str(&txt).context("parsing config")?;
+        let f: AppConfig = load_config_file(Some(path.clone())).context("loading config file")?;
         EffectiveCfg::from_args_config(&args, Some(f))
     } else {
         EffectiveCfg::from_args_config(&args, None)
     };
 
-    let client = Client::new();
+    let raceboard_client = RaceboardClient::new(cfg.server_config.clone())
+        .context("Failed to create raceboard client")?;
+    
+    // Create and register health monitor
+    let instance_id = format!("calendar-{}", std::process::id());
+    let mut health_monitor = AdapterHealthMonitor::new(
+        raceboard_client.clone(),
+        AdapterType::Calendar,
+        instance_id.clone(),
+        60, // Report health every 60 seconds
+    ).await.context("Failed to create health monitor")?;
+    
+    log::info!("Registering calendar adapter with Raceboard server...");
+    health_monitor.register().await
+        .context("Failed to register adapter with server")?;
+    log::info!("Adapter registered successfully as: adapter:calendar:{}", instance_id);
+    
+    // Start automatic health reporting
+    let health_report_handle = tokio::spawn(async move {
+        health_monitor.clone().start_health_reporting().await;
+    });
+    
     let mut state: Option<FreeRaceState> = None;
     let mut tick = interval(cfg.poll_interval);
     loop {
         tick.tick().await;
-        if let Err(e) = sync_once(&cfg, &client, &mut state).await {
+        if let Err(e) = sync_once(&cfg, &raceboard_client, &mut state).await {
             eprintln!("[calendar] sync error: {e}");
         }
     }
@@ -264,7 +255,7 @@ async fn main() -> Result<()> {
 
 async fn sync_once(
     cfg: &EffectiveCfg,
-    client: &Client,
+    client: &RaceboardClient,
     state: &mut Option<FreeRaceState>,
 ) -> Result<()> {
     // Resolve working window today in local tz
@@ -290,7 +281,7 @@ async fn sync_once(
     if Utc::now() < work_start || Utc::now() >= work_end {
         // Outside working hours: finish any active race
         if let Some(active) = state.take() {
-            finish_race(client, &cfg.server_url, &active.race_id)
+            finish_race(client, &active.race_id)
                 .await
                 .ok();
         }
@@ -327,7 +318,6 @@ async fn sync_once(
         let next_title = next_meeting_title_after(now, &busy);
         ensure_free_window_race(
             client,
-            &cfg.server_url,
             state,
             window_start,
             window_end,
@@ -336,14 +326,14 @@ async fn sync_once(
         .await?;
     } else if let Some(active) = state.take() {
         // If we now have a meeting, finish the active free race
-        finish_race(client, &cfg.server_url, &active.race_id).await?;
+        finish_race(client, &active.race_id).await?;
     }
 
     // If a race is active, update progress/ETA
     if let Some(active) = state.as_mut() {
         let now = Utc::now();
         if now >= active.window_end {
-            finish_race(client, &cfg.server_url, &active.race_id).await?;
+            finish_race(client, &active.race_id).await?;
             *state = None;
         } else {
             let dur = (active.window_end - active.window_start)
@@ -354,7 +344,6 @@ async fn sync_once(
             let eta = (active.window_end - now).num_seconds();
             patch_progress(
                 client,
-                &cfg.server_url,
                 &active.race_id,
                 progress.clamp(0, 99),
                 eta,
@@ -443,8 +432,7 @@ fn next_meeting_title_after(
 }
 
 async fn ensure_free_window_race(
-    client: &Client,
-    server_url: &str,
+    client: &RaceboardClient,
     state: &mut Option<FreeRaceState>,
     window_start: DateTime<Utc>,
     window_end: DateTime<Utc>,
@@ -460,7 +448,7 @@ async fn ensure_free_window_race(
 
     // Finish previous if exists
     if let Some(prev) = state.take() {
-        finish_race(client, server_url, &prev.race_id).await.ok();
+        finish_race(client, &prev.race_id).await.ok();
     }
 
     let eta_sec = (window_end - now).num_seconds().max(0);
@@ -478,11 +466,11 @@ async fn ensure_free_window_race(
     let mut metadata = HashMap::new();
     metadata.insert(
         "window_start".to_string(),
-        serde_json::json!(window_start.to_rfc3339()),
+        window_start.to_rfc3339(),
     );
     metadata.insert(
         "window_end".to_string(),
-        serde_json::json!(window_end.to_rfc3339()),
+        window_end.to_rfc3339(),
     );
 
     let race = Race {
@@ -490,26 +478,13 @@ async fn ensure_free_window_race(
         source: "google-calendar".to_string(),
         title,
         state: RaceState::Running,
-        started_at: window_start.to_rfc3339(),
+        started_at: window_start,
         eta_sec: Some(eta_sec),
         progress: Some(progress.clamp(0, 99)),
         deeplink: None,
         metadata: Some(metadata),
     };
-    let url = format!("{}/race", server_url);
-    let resp = client
-        .post(&url)
-        .json(&race)
-        .send()
-        .await
-        .context("create race")?;
-    if resp.status().as_u16() == 503 && resp.headers().get("X-Raceboard-Read-Only").is_some() {
-        eprintln!("[calendar] server in read-only; will retry next tick");
-        return Ok(());
-    }
-    if !resp.status().is_success() {
-        eprintln!("[calendar] create race HTTP {}", resp.status());
-    }
+    let _created_race = client.create_race(&race).await.context("create race")?;
     *state = Some(FreeRaceState {
         race_id: id,
         window_start,
@@ -519,38 +494,31 @@ async fn ensure_free_window_race(
 }
 
 async fn patch_progress(
-    client: &Client,
-    server_url: &str,
+    client: &RaceboardClient,
     race_id: &str,
     progress: i32,
     eta_sec: i64,
 ) -> Result<()> {
-    let url = format!("{}/race/{}", server_url, race_id);
     let update = RaceUpdate {
         state: None,
         progress: Some(progress),
         eta_sec: Some(eta_sec),
         metadata: None,
+        deeplink: None,
     };
-    let resp = client.patch(&url).json(&update).send().await?;
-    if resp.status().as_u16() == 503 && resp.headers().get("X-Raceboard-Read-Only").is_some() {
-        eprintln!("[calendar] read-only during progress; skipping");
-    }
+    client.update_race(race_id, &update).await.context("update race progress")?;
     Ok(())
 }
 
-async fn finish_race(client: &Client, server_url: &str, race_id: &str) -> Result<()> {
-    let url = format!("{}/race/{}", server_url, race_id);
+async fn finish_race(client: &RaceboardClient, race_id: &str) -> Result<()> {
     let update = RaceUpdate {
         state: Some(RaceState::Passed),
         progress: Some(100),
         eta_sec: Some(0),
         metadata: None,
+        deeplink: None,
     };
-    let resp = client.patch(&url).json(&update).send().await?;
-    if resp.status().as_u16() == 503 && resp.headers().get("X-Raceboard-Read-Only").is_some() {
-        eprintln!("[calendar] read-only during finish; will finalize on next tick");
-    }
+    client.update_race(race_id, &update).await.context("finish race")?;
     Ok(())
 }
 

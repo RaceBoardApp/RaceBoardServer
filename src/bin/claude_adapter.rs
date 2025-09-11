@@ -1,52 +1,13 @@
-use anyhow::{Context, Result};
+use anyhow::Result;
 use chrono::Utc;
 use clap::{Parser, Subcommand};
-use reqwest::Client;
-use serde::{Deserialize, Serialize};
+use RaceboardServer::adapter_common::{RaceboardClient, Race, RaceState, RaceUpdate, Event, ServerConfig};
 use serde_json::json;
 use std::collections::HashMap;
 use std::env;
 use std::io::{self};
 use tokio::time::{sleep, Duration};
 use uuid::Uuid;
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-enum RaceState {
-    Queued,
-    Running,
-    Passed,
-    Failed,
-    Canceled,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct Race {
-    id: String,
-    source: String,
-    title: String,
-    state: RaceState,
-    started_at: String,
-    eta_sec: Option<i64>,
-    progress: Option<i32>,
-    deeplink: Option<String>,
-    metadata: Option<HashMap<String, String>>,
-}
-
-#[derive(Debug, Serialize)]
-struct RaceUpdate {
-    state: Option<RaceState>,
-    progress: Option<i32>,
-    eta_sec: Option<i64>,
-    metadata: Option<HashMap<String, String>>,
-}
-
-#[derive(Debug, Serialize)]
-struct Event {
-    #[serde(rename = "type")]
-    event_type: String,
-    data: Option<serde_json::Value>,
-}
 
 #[derive(Parser, Debug)]
 #[command(author, version, about = "Claude Code adapter for Raceboard", long_about = None)]
@@ -168,61 +129,30 @@ fn parse_metadata(s: &str) -> Result<(String, String), String> {
 }
 
 struct ClaudeAdapter {
-    client: Client,
-    server_url: String,
+    client: RaceboardClient,
 }
 
 impl ClaudeAdapter {
-    fn new(server_url: String) -> Self {
-        Self {
-            client: Client::new(),
-            server_url,
-        }
+    fn new(server_url: String) -> Result<Self> {
+        let config = ServerConfig {
+            url: server_url,
+            timeout_seconds: 30,
+            max_retries: 3,
+        };
+        let client = RaceboardClient::new(config)?;
+        Ok(Self { client })
     }
 
-    async fn create_race(&self, race: Race) -> Result<Race> {
-        let response = self
-            .client
-            .post(format!("{}/race", self.server_url))
-            .json(&race)
-            .send()
-            .await
-            .context("Failed to create race")?
-            .error_for_status()
-            .context("Server returned error while creating race")?;
-
-        let created_race = response
-            .json::<Race>()
-            .await
-            .context("Failed to parse race response")?;
-
-        Ok(created_race)
+    async fn create_race(&self, race: &Race) -> Result<Race> {
+        self.client.create_race(race).await
     }
 
-    async fn update_race(&self, race_id: &str, update: RaceUpdate) -> Result<()> {
-        self.client
-            .patch(format!("{}/race/{}", self.server_url, race_id))
-            .json(&update)
-            .send()
-            .await
-            .context("Failed to update race")?
-            .error_for_status()
-            .context("Server returned error while updating race")?;
-
-        Ok(())
+    async fn update_race(&self, race_id: &str, update: &RaceUpdate) -> Result<()> {
+        self.client.update_race(race_id, update).await
     }
 
-    async fn add_event(&self, race_id: &str, event: Event) -> Result<()> {
-        self.client
-            .post(format!("{}/race/{}/event", self.server_url, race_id))
-            .json(&event)
-            .send()
-            .await
-            .context("Failed to add event")?
-            .error_for_status()
-            .context("Server returned error while adding event")?;
-
-        Ok(())
+    async fn add_event(&self, race_id: &str, event: &Event) -> Result<()> {
+        self.client.add_event(race_id, event).await
     }
 
     async fn handle_start(&self, args: Commands) -> Result<()> {
@@ -315,14 +245,14 @@ impl ClaudeAdapter {
                 source: "claude-code".to_string(),
                 title: race_title,
                 state: RaceState::Running,
-                started_at: Utc::now().to_rfc3339(),
+                started_at: Utc::now(),
                 eta_sec: eta,
                 progress: Some(0),
                 deeplink: None,
                 metadata: Some(race_metadata),
             };
 
-            let created = self.create_race(race).await?;
+            let created = self.create_race(&race).await?;
 
             // Output the race ID for the hook to capture
             println!("{}", created.id);
@@ -360,35 +290,31 @@ impl ClaudeAdapter {
             }
 
             // Add completion event (include response preview and length)
-            self.add_event(
-                &race_id,
-                Event {
-                    event_type: "response".to_string(),
-                    data: Some(json!({
-                        "success": success,
-                        "response_preview": response_text.chars().take(200).collect::<String>(),
-                        "response_length": response_text.len()
-                    })),
-                },
-            )
-            .await?;
+            let event = Event {
+                event_type: "response".to_string(),
+                timestamp: Utc::now(),
+                data: Some(json!({
+                    "success": success,
+                    "response_preview": response_text.chars().take(200).collect::<String>(),
+                    "response_length": response_text.len()
+                })),
+            };
+            self.add_event(&race_id, &event).await?;
 
             // Update race state
-            self.update_race(
-                &race_id,
-                RaceUpdate {
-                    state: Some(if success {
-                        RaceState::Passed
-                    } else {
-                        RaceState::Failed
-                    }),
-                    progress: Some(100),
-                    eta_sec: Some(0),
-                    // Preserve original metadata set on creation; do not overwrite here
-                    metadata: None,
-                },
-            )
-            .await?;
+            let update = RaceUpdate {
+                state: Some(if success {
+                    RaceState::Passed
+                } else {
+                    RaceState::Failed
+                }),
+                progress: Some(100),
+                eta_sec: Some(0),
+                deeplink: None,
+                // Preserve original metadata set on creation; do not overwrite here
+                metadata: None,
+            };
+            self.update_race(&race_id, &update).await?;
         }
 
         Ok(())
@@ -417,16 +343,14 @@ impl ClaudeAdapter {
                 Some(metadata.into_iter().collect())
             };
 
-            self.update_race(
-                &race_id,
-                RaceUpdate {
-                    state: race_state,
-                    progress,
-                    eta_sec: None,
-                    metadata: update_metadata,
-                },
-            )
-            .await?;
+            let update = RaceUpdate {
+                state: race_state,
+                progress,
+                eta_sec: None,
+                deeplink: None,
+                metadata: update_metadata,
+            };
+            self.update_race(&race_id, &update).await?;
         }
 
         Ok(())
@@ -508,7 +432,7 @@ impl ClaudeAdapter {
             source: "claude-code".to_string(),
             title,
             state: RaceState::Running,
-            started_at: Utc::now().to_rfc3339(),
+            started_at: Utc::now(),
             eta_sec: None, // Let server predict ETA using clustering
             progress: Some(0),
             deeplink: None,
@@ -555,7 +479,7 @@ impl ClaudeAdapter {
             }),
         };
 
-        let created = self.create_race(race).await?;
+        let created = self.create_race(&race).await?;
 
         // Write race ID to temp file for response hook
         fs::write(race_file, &created.id)?;
@@ -571,7 +495,7 @@ impl ClaudeAdapter {
         // Start progress tracking in background if enabled
         if progress_tracking {
             // Spawn a background process to handle progress updates
-            let interval = (server_eta / 10).max(2).min(10); // Update every 10% or at least every 2s, max 10s
+            let update_interval = if interval > 0 { interval } else { (server_eta / 10).max(2).min(10) as u64 }; // Use provided interval or calculate one
                                                              // Use nohup to detach the process
             let binary_path = env::var("RACEBOARD_CLAUDE").unwrap_or_else(|_| {
                 std::env::current_exe()
@@ -582,7 +506,7 @@ impl ClaudeAdapter {
 
             let cmd = format!(
                 "nohup {} update-progress --race-id {} --eta {} --interval {} --server {} >/dev/null 2>&1 &",
-                binary_path, created.id, server_eta, interval, self.server_url
+                binary_path, created.id, server_eta, update_interval, "http://localhost:7777"
             );
 
             Command::new("sh").arg("-c").arg(&cmd).spawn()?;
@@ -704,7 +628,7 @@ echo "$RESPONSE"
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
-    let adapter = ClaudeAdapter::new(args.server.clone());
+    let adapter = ClaudeAdapter::new(args.server.clone())?;
 
     match args.command {
         Commands::Start { .. } => adapter.handle_start(args.command).await?,
@@ -750,17 +674,14 @@ async fn main() -> Result<()> {
                 .min(95);
 
                 // Update progress
-                let _ = adapter
-                    .update_race(
-                        &race_id,
-                        RaceUpdate {
-                            state: None,
-                            progress: Some(progress),
-                            eta_sec: None,
-                            metadata: None,
-                        },
-                    )
-                    .await;
+                let update = RaceUpdate {
+                    state: None,
+                    progress: Some(progress),
+                    eta_sec: None,
+                    deeplink: None,
+                    metadata: None,
+                };
+                let _ = adapter.update_race(&race_id, &update).await;
 
                 // Sleep before next update
                 sleep(Duration::from_secs(interval)).await;

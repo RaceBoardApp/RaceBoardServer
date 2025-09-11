@@ -389,24 +389,36 @@ impl AdapterRegistry {
         }
     }
     
-    /// Remove stale registrations (not reported for >1 hour)
-    pub async fn cleanup_stale(&self) {
+    /// Remove stale registrations (not reported for >10 minutes)
+    /// Returns the list of removed adapter IDs
+    pub async fn cleanup_stale(&self) -> Vec<String> {
         let mut adapters = self.adapters.write().await;
-        let one_hour_ago = Utc::now() - Duration::hours(1);
+        let ten_minutes_ago = Utc::now() - Duration::minutes(10);
+        let mut removed = Vec::new();
         
-        adapters.retain(|_, (reg, health)| {
+        adapters.retain(|id, (reg, health)| {
             // Keep exempt and stopped adapters
             if matches!(health.state, AdapterHealthState::Exempt | AdapterHealthState::Stopped) {
                 return true;
             }
             
-            // Remove if in UNKNOWN state for >1 hour
+            // Remove if in UNKNOWN state for >10 minutes
             if health.state == AdapterHealthState::Unknown {
-                return health.state_changed_at > one_hour_ago;
+                let should_keep = health.state_changed_at > ten_minutes_ago;
+                if !should_keep {
+                    tracing::info!(
+                        "Removing stale adapter: {} (type: {:?}, last seen: {:?})",
+                        id, reg.adapter_type, health.last_report
+                    );
+                    removed.push(id.clone());
+                }
+                return should_keep;
             }
             
             true
         });
+        
+        removed
     }
 }
 

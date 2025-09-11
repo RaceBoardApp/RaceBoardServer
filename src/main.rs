@@ -42,7 +42,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let clear_clusters = args.contains(&"--clear-clusters".to_string());
     
     if clear_clusters {
-        log::warn!("Starting with --clear-clusters flag: will clear all clusters on startup");
+        log::info!("Starting with --clear-clusters flag: will clear all clusters on startup");
     }
     
     // Load configuration
@@ -60,7 +60,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let max_races = settings.storage.max_races.max(100_000); // Minimum 100k for ML
     let max_events = settings.storage.max_events_per_race.max(1000);
 
-    log::warn!(
+    log::info!(
         "Storage configuration: max_races={}, max_events_per_race={}",
         max_races,
         max_events
@@ -112,7 +112,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Load existing clusters from disk (unless --clear-clusters flag is set)
     if clear_clusters {
-        log::warn!("Clearing all clusters due to --clear-clusters flag");
+        log::info!("Clearing all clusters due to --clear-clusters flag");
         // Clear persisted clusters
         if let Err(e) = persistence.clear_clusters() {
             log::error!("Failed to clear clusters: {}", e);
@@ -264,6 +264,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .ok()
                 .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
                 .unwrap_or(false),
+        legacy_json_fallback_enabled: settings.server.legacy_json_fallback_enabled
+            || std::env::var("RACEBOARD_SERVER__LEGACY_JSON_FALLBACK_ENABLED")
+                .ok()
+                .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+                .unwrap_or(false),
     };
     log::info!("Storage: in-memory with ETA prediction and cluster rebuilding");
 
@@ -362,7 +367,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Start gRPC server with graceful shutdown
     let grpc_settings = settings.clone();
-    let grpc_service = RaceServiceImpl::new(storage.clone(), persistence.clone(), adapter_registry.clone());
+    let grpc_service = RaceServiceImpl::new(storage.clone(), persistence.clone(), adapter_registry.clone(), settings.server.read_only);
     let (grpc_shutdown_tx, grpc_shutdown_rx) = tokio::sync::oneshot::channel::<()>();
     let grpc_task = tokio::spawn(async move {
         let addr = grpc_settings.grpc_addr().parse().unwrap();

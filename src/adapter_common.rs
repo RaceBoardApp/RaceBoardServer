@@ -4,7 +4,7 @@ use reqwest::{Client, Response, StatusCode};
 use serde::{Deserialize, Serialize};
 use serde_json;
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::time::Duration;
 use tokio::time::{sleep, timeout};
 use tracing::{info, warn};
@@ -458,6 +458,228 @@ impl ProgressTracker {
             let remaining = (total - self.current_step) as f64;
             (remaining * rate) as i64
         })
+    }
+}
+
+// ==========================================================================
+// Adapter Registration and Health Monitoring (REST-only)
+// ==========================================================================
+
+/// Adapter types supported by the system
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AdapterType {
+    GitLab,
+    Calendar,
+    CodexWatch,
+    GeminiWatch,
+    Claude,
+    Cmd,
+}
+
+impl AdapterType {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::GitLab => "gitlab",
+            Self::Calendar => "calendar",
+            Self::CodexWatch => "codex-watch",
+            Self::GeminiWatch => "gemini-watch",
+            Self::Claude => "claude",
+            Self::Cmd => "cmd",
+        }
+    }
+    
+    pub fn display_name(&self) -> &'static str {
+        match self {
+            Self::GitLab => "GitLab CI",
+            Self::Calendar => "Google Calendar",
+            Self::CodexWatch => "Codex Watch",
+            Self::GeminiWatch => "Gemini Watch",
+            Self::Claude => "Claude",
+            Self::Cmd => "Command Runner",
+        }
+    }
+    
+    /// Variant name expected by server's AdapterType (serde default names)
+    pub fn server_variant_name(&self) -> &'static str {
+        match self {
+            Self::GitLab => "GitLab",
+            Self::Calendar => "Calendar",
+            Self::CodexWatch => "CodexWatch",
+            Self::GeminiWatch => "GeminiWatch",
+            Self::Claude => "Claude",
+            Self::Cmd => "Cmd",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct RegisterPayload {
+    id: String,
+    adapter_type: String,
+    instance_id: String,
+    display_name: String,
+    version: String,
+    registered_at: DateTime<Utc>,
+    health_interval_seconds: u32,
+    pid: Option<u32>,
+    metadata: HashMap<String, String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+struct HealthMetricsPayload {
+    races_created: u64,
+    races_updated: u64,
+    last_activity: Option<DateTime<Utc>>,
+    error_count: u64,
+    response_time_ms: Option<u64>,
+    memory_usage_bytes: Option<u64>,
+    cpu_usage_percent: Option<f32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct HealthReportPayload {
+    adapter_id: String,
+    metrics: HealthMetricsPayload,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct DeregisterPayload {
+    adapter_id: String,
+}
+
+/// Adapter health monitoring handler using REST only
+#[derive(Clone)]
+pub struct AdapterHealthMonitor {
+    rest_client: RaceboardClient,
+    adapter_type: AdapterType,
+    instance_id: String,
+    health_interval_seconds: u32,
+    race_id: String,
+}
+
+impl AdapterHealthMonitor {
+    pub async fn new(
+        client: RaceboardClient,
+        adapter_type: AdapterType,
+        instance_id: String,
+        health_interval_seconds: u32,
+    ) -> Result<Self> {
+        let race_id = format!("adapter:{}:{}", adapter_type.as_str(), instance_id);
+        Ok(Self {
+            rest_client: client,
+            adapter_type,
+            instance_id,
+            health_interval_seconds,
+            race_id,
+        })
+    }
+    
+    /// Register the adapter with the server using REST
+    pub async fn register(&mut self) -> Result<()> {
+        info!("Registering adapter (REST): {} ({})", self.race_id, self.adapter_type.display_name());
+        
+        let mut metadata = HashMap::new();
+        metadata.insert("display_name".to_string(), self.adapter_type.display_name().to_string());
+        
+        let payload = RegisterPayload {
+            id: self.race_id.clone(),
+            adapter_type: self.adapter_type.server_variant_name().to_string(),
+            instance_id: self.instance_id.clone(),
+            display_name: format!("{} ({})", self.adapter_type.display_name(), self.instance_id),
+            version: env!("CARGO_PKG_VERSION").to_string(),
+            registered_at: Utc::now(),
+            health_interval_seconds: self.health_interval_seconds,
+            pid: Some(std::process::id()),
+            metadata,
+        };
+        
+        let url = format!("{}/adapter/register", self.rest_client.server_url);
+        self.rest_client
+            .execute_with_retry(|| async {
+                self.rest_client
+                    .client
+                    .post(&url)
+                    .json(&payload)
+                    .send()
+                    .await
+            })
+            .await
+            .context("Failed to register adapter via REST")?;
+        
+        Ok(())
+    }
+    
+    /// Send a health report to the server using REST
+    pub async fn report_health(&mut self, is_healthy: bool) -> Result<()> {
+        let metrics = HealthMetricsPayload {
+            races_created: 0,
+            races_updated: 0,
+            last_activity: Some(Utc::now()),
+            error_count: if is_healthy { 0 } else { 1 },
+            response_time_ms: None,
+            memory_usage_bytes: None,
+            cpu_usage_percent: None,
+        };
+        
+        let payload = HealthReportPayload {
+            adapter_id: self.race_id.clone(),
+            metrics,
+            error: if is_healthy { None } else { Some("Unhealthy state".to_string()) },
+        };
+        
+        let url = format!("{}/adapter/health", self.rest_client.server_url);
+        self.rest_client
+            .execute_with_retry(|| async {
+                self.rest_client
+                    .client
+                    .post(&url)
+                    .json(&payload)
+                    .send()
+                    .await
+            })
+            .await
+            .context("Failed to report health via REST")?;
+        
+        Ok(())
+    }
+    
+    /// Deregister the adapter from the server using REST
+    pub async fn deregister(&mut self) -> Result<()> {
+        info!("Deregistering adapter (REST): {}", self.race_id);
+        
+        let payload = DeregisterPayload {
+            adapter_id: self.race_id.clone(),
+        };
+        let url = format!("{}/adapter/deregister", self.rest_client.server_url);
+        self.rest_client
+            .execute_with_retry(|| async {
+                self.rest_client
+                    .client
+                    .post(&url)
+                    .json(&payload)
+                    .send()
+                    .await
+            })
+            .await
+            .context("Failed to deregister adapter via REST")?;
+        
+        Ok(())
+    }
+    
+    /// Start periodic health reporting
+    pub async fn start_health_reporting(mut self) {
+        let interval = Duration::from_secs(self.health_interval_seconds as u64);
+        let mut ticker = tokio::time::interval(interval);
+        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        
+        loop {
+            ticker.tick().await;
+            if let Err(e) = self.report_health(true).await {
+                warn!("Failed to report health: {}", e);
+            }
+        }
     }
 }
 

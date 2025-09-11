@@ -6,6 +6,10 @@ use log::{debug, error, info, warn};
 use notify::{DebouncedEvent, RecommendedWatcher, RecursiveMode, Watcher};
 use regex::Regex;
 use reqwest::Client;
+use RaceboardServer::adapter_common::{
+    RaceboardClient, Race, RaceState, RaceUpdate, Event, ServerConfig,
+    AdapterType, AdapterHealthMonitor
+};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
@@ -16,36 +20,7 @@ use std::sync::mpsc::channel;
 use std::time::{Duration, Instant};
 use uuid::Uuid;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-enum RaceState {
-    Queued,
-    Running,
-    Passed,
-    Failed,
-    Canceled,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-struct Race {
-    id: String,
-    source: String,
-    title: String,
-    state: RaceState,
-    started_at: String,
-    eta_sec: Option<i64>,
-    progress: Option<i32>,
-    deeplink: Option<String>,
-    metadata: Option<HashMap<String, String>>,
-}
-
-#[derive(Debug, Serialize)]
-struct RaceUpdate {
-    state: Option<RaceState>,
-    progress: Option<i32>,
-    eta_sec: Option<i64>,
-    metadata: Option<HashMap<String, String>>,
-}
+// Race, RaceState, RaceUpdate, and Event are now imported from adapter_common
 
 #[derive(Parser, Debug)]
 #[command(
@@ -234,40 +209,23 @@ trait RaceboardApi: Send + Sync {
 }
 
 struct RealRaceboardApi {
-    client: Client,
-    server_url: String,
+    client: RaceboardClient,
 }
 
 impl RealRaceboardApi {
-    fn new(server_url: String) -> Self {
-        Self {
-            client: Client::new(),
-            server_url,
-        }
+    fn new(server_config: ServerConfig) -> Result<Self> {
+        Ok(Self {
+            client: RaceboardClient::new(server_config)?,
+        })
     }
 }
 
 impl RaceboardApi for RealRaceboardApi {
     fn create_race(&self, race: Race) -> BoxFuture<'static, Result<Race>> {
         let client = self.client.clone();
-        let url = format!("{}/race", self.server_url);
         Box::pin(async move {
-            debug!("POST {}", url);
-            let response = client
-                .post(url)
-                .json(&race)
-                .send()
-                .await
-                .context("Failed to create race")?;
-            if !response.status().is_success() {
-                error!("Create race failed: HTTP {}", response.status());
-                anyhow::bail!("Server returned error: {}", response.status());
-            }
-            let created_race = response
-                .json::<Race>()
-                .await
-                .context("Failed to parse race response")?;
-            Ok(created_race)
+            debug!("Creating race: {}", race.id);
+            client.create_race(&race).await.context("Failed to create race")
         })
     }
 
@@ -277,49 +235,31 @@ impl RaceboardApi for RealRaceboardApi {
         progress: i32,
     ) -> BoxFuture<'static, Result<()>> {
         let client = self.client.clone();
-        let url = format!("{}/race/{}", self.server_url, race_id);
-        let update = RaceUpdate {
-            state: None,
-            progress: Some(progress),
-            eta_sec: None,
-            metadata: None,
-        };
         Box::pin(async move {
-            debug!("PATCH {} progress={}", url, progress);
-            let response = client
-                .patch(url)
-                .json(&update)
-                .send()
-                .await
-                .context("Failed to update race")?;
-            if !response.status().is_success() {
-                warn!("Update race HTTP error: {}", response.status());
-            }
-            Ok(())
+            debug!("Updating race {} progress={}", race_id, progress);
+            let update = RaceUpdate {
+                state: None,
+                progress: Some(progress),
+                eta_sec: None,
+                metadata: None,
+                deeplink: None,
+            };
+            client.update_race(&race_id, &update).await.context("Failed to update race progress")
         })
     }
 
     fn complete_race(&self, race_id: String) -> BoxFuture<'static, Result<()>> {
         let client = self.client.clone();
-        let url = format!("{}/race/{}", self.server_url, race_id);
-        let update = RaceUpdate {
-            state: Some(RaceState::Passed),
-            progress: Some(100),
-            eta_sec: Some(0),
-            metadata: None, // preserve original creation metadata on the server
-        };
         Box::pin(async move {
-            debug!("PATCH {} complete", url);
-            let response = client
-                .patch(url)
-                .json(&update)
-                .send()
-                .await
-                .context("Failed to complete race")?;
-            if !response.status().is_success() {
-                warn!("Complete race HTTP error: {}", response.status());
-            }
-            Ok(())
+            debug!("Completing race: {}", race_id);
+            let update = RaceUpdate {
+                state: Some(RaceState::Passed),
+                progress: Some(100),
+                eta_sec: Some(0),
+                metadata: None,
+                deeplink: None,
+            };
+            client.update_race(&race_id, &update).await.context("Failed to complete race")
         })
     }
 }
@@ -338,20 +278,20 @@ pub struct CodexLogWatcher {
 
 impl CodexLogWatcher {
     pub fn new(
-        server_url: String,
+        server_config: ServerConfig,
         debug: bool,
         log_path_override: Option<PathBuf>,
         only_submission_starts: bool,
         min_turn_secs: u64,
-    ) -> Self {
+    ) -> Result<Self> {
         let default_path = dirs::home_dir()
             .expect("Could not find home directory")
             .join(".codex/log/codex-tui.log");
 
         let log_path = log_path_override.unwrap_or(default_path);
 
-        Self {
-            api: Box::new(RealRaceboardApi::new(server_url)),
+        Ok(Self {
+            api: Box::new(RealRaceboardApi::new(server_config)?),
             log_path,
             last_position: 0,
             current_session: None,
@@ -360,7 +300,7 @@ impl CodexLogWatcher {
             only_submission_starts,
             min_turn_secs,
             debug,
-        }
+        })
     }
 
     pub fn skip_to_end(&mut self) -> Result<()> {
@@ -536,7 +476,7 @@ impl CodexLogWatcher {
                 source: "codex-session".to_string(),
                 title: title.clone(),
                 state: RaceState::Running,
-                started_at: Utc::now().to_rfc3339(),
+                started_at: Utc::now(),
                 eta_sec: None, // Will be updated based on complexity
                 progress: Some(0),
                 deeplink: None,
@@ -667,7 +607,7 @@ impl CodexLogWatcher {
                     source: "codex-session".to_string(),
                     title: title.to_string(),
                     state: RaceState::Running,
-                    started_at: Utc::now().to_rfc3339(),
+                    started_at: Utc::now(),
                     eta_sec: None,
                     progress: Some(0),
                     deeplink: None,
@@ -922,30 +862,56 @@ async fn main() -> Result<()> {
             .unwrap_or_else(|| "<default> ~/.codex/log/codex-tui.log".to_string())
     );
 
-    // Check if server is reachable
-    match reqwest::get(format!("{}/health", args.server)).await {
-        Ok(resp) => {
+    // Create server config and test connection
+    let server_config = ServerConfig {
+        url: args.server.clone(),
+        ..Default::default()
+    };
+    
+    let raceboard_client = RaceboardClient::new(server_config.clone())
+        .context("Failed to create raceboard client")?;
+        
+    match raceboard_client.health_check().await {
+        Ok(true) => {
             println!("✅ Connected to Raceboard server");
-            debug!("/health status: {}", resp.status());
+            debug!("/health status: OK");
         }
-        Err(e) => {
+        Ok(false) | Err(_) => {
             eprintln!(
                 "⚠️  Warning: Cannot reach Raceboard server at {}",
                 args.server
             );
-            eprintln!("   {}", e);
             eprintln!("   Make sure the server is running: cargo run --bin raceboard-server");
-            warn!("Health check failed: {}", e);
+            warn!("Health check failed");
         }
     }
+    
+    // Create and register health monitor
+    let instance_id = format!("codex-watch-{}", std::process::id());
+    let mut health_monitor = AdapterHealthMonitor::new(
+        raceboard_client.clone(),
+        AdapterType::CodexWatch,
+        instance_id.clone(),
+        60, // Report health every 60 seconds
+    ).await.context("Failed to create health monitor")?;
+    
+    info!("Registering codex-watch adapter with Raceboard server...");
+    health_monitor.register().await
+        .context("Failed to register adapter with server")?;
+    info!("Adapter registered successfully as: adapter:codex-watch:{}", instance_id);
+    
+    // Start automatic health reporting
+    let _health_report_handle = tokio::spawn(async move {
+        health_monitor.clone().start_health_reporting().await;
+    });
 
     let mut watcher = CodexLogWatcher::new(
-        args.server,
+        server_config,
         args.debug,
         args.log_path,
         args.only_submission_starts,
         args.min_turn_secs,
-    );
+    )?;
 
     // Always behave as: new_only + follow
     watcher.skip_to_end()?;
