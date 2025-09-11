@@ -23,141 +23,26 @@ Key patterns:
 - Timestamps in ISO format
 - JSON payloads with structured data
 
-## Implementation: Codex Log Watcher
+## Design Summary (trimmed)
 
-```rust
-use notify::{Watcher, RecursiveMode, watcher};
-use regex::Regex;
-use serde_json::Value;
-use std::fs::File;
-use std::io::{BufRead, BufReader, Seek, SeekFrom};
-use std::path::Path;
+This page focuses on the signals and heuristics used for tracking, not full source listings.
 
-pub struct CodexLogWatcher {
-    log_path: PathBuf,
-    last_position: u64,
-    races: HashMap<String, String>, // plan_step -> race_id
-}
+Key signals parsed from the Codex log:
+- Plan updates: start/complete steps → create/finish races.
+- Function calls: activity bursts indicate progress; long idle implies wrapping up.
+- Apply-patch events: increase progress and attach events.
 
-impl CodexLogWatcher {
-    pub fn new() -> Self {
-        Self {
-            log_path: dirs::home_dir()
-                .unwrap()
-                .join(".codex/log/codex-tui.log"),
-            last_position: 0,
-            races: HashMap::new(),
-        }
-    }
-    
-    pub async fn watch(&mut self) {
-        // Seek to end of file on start
-        let mut file = File::open(&self.log_path).unwrap();
-        self.last_position = file.metadata().unwrap().len();
-        
-        // Watch for changes
-        let (tx, rx) = std::sync::mpsc::channel();
-        let mut watcher = watcher(tx, Duration::from_millis(100)).unwrap();
-        watcher.watch(&self.log_path, RecursiveMode::NonRecursive).unwrap();
-        
-        loop {
-            match rx.recv() {
-                Ok(DebouncedEvent::Write(_)) => {
-                    self.process_new_lines().await;
-                }
-                _ => {}
-            }
-        }
-    }
-    
-    async fn process_new_lines(&mut self) {
-        let mut file = File::open(&self.log_path).unwrap();
-        file.seek(SeekFrom::Start(self.last_position)).unwrap();
-        
-        let reader = BufReader::new(file);
-        for line in reader.lines() {
-            if let Ok(line) = line {
-                self.parse_log_line(&line).await;
-            }
-        }
-        
-        // Update position
-        self.last_position = file.metadata().unwrap().len();
-    }
-    
-    async fn parse_log_line(&mut self, line: &str) {
-        // Extract FunctionCall lines
-        let re = Regex::new(r"FunctionCall: (\w+)\((.*)\)").unwrap();
-        if let Some(caps) = re.captures(line) {
-            let function = &caps[1];
-            let json_str = &caps[2];
-            
-            match function {
-                "update_plan" => self.handle_plan_update(json_str).await,
-                "shell" => self.handle_shell_command(json_str).await,
-                "apply_patch" => self.handle_patch(json_str).await,
-                _ => {}
-            }
-        }
-    }
-    
-    async fn handle_plan_update(&mut self, json_str: &str) {
-        if let Ok(data) = serde_json::from_str::<Value>(json_str) {
-            if let Some(plan) = data["plan"].as_array() {
-                for step in plan {
-                    let status = step["status"].as_str().unwrap_or("pending");
-                    let step_name = step["step"].as_str().unwrap_or("Unknown");
-                    
-                    match status {
-                        "in_progress" => {
-                            // Start a new race for this step
-                            let race = Race {
-                                id: Uuid::new_v4().to_string(),
-                                source: "codex-plan".to_string(),
-                                title: format!("Codex: {}", step_name),
-                                state: RaceState::Running,
-                                started_at: Utc::now().to_rfc3339(),
-                                eta_sec: Some(60),
-                                progress: Some(0),
-                                deeplink: None,
-                                metadata: Some({
-                                    let mut m = HashMap::new();
-                                    m.insert("step".to_string(), step_name.to_string());
-                                    m.insert("log_file".to_string(), self.log_path.display().to_string());
-                                    m
-                                }),
-                            };
-                            
-                            let created = create_race(race).await;
-                            self.races.insert(step_name.to_string(), created.id);
-                            println!("🏁 Started: {}", step_name);
-                        },
-                        "completed" => {
-                            // Complete the race for this step
-                            if let Some(race_id) = self.races.get(step_name) {
-                                complete_race(race_id).await;
-                                println!("✅ Completed: {}", step_name);
-                            }
-                        },
-                        _ => {}
-                    }
-                }
-            }
-        }
-    }
-    
-    async fn handle_shell_command(&mut self, json_str: &str) {
-        if let Ok(data) = serde_json::from_str::<Value>(json_str) {
-            if let Some(command) = data["command"].as_array() {
-                let cmd_str = command
-                    .iter()
-                    .filter_map(|v| v.as_str())
-                    .collect::<Vec<_>>()
-                    .join(" ");
-                
-                // Extract meaningful command description
-                let title = self.extract_command_title(&cmd_str);
-                
+Heuristics (high level):
+- Prefer explicit plan progress when available; otherwise activity/time-based estimates.
+- Cap optimistic progress below 100% (e.g., ≤95%) until a completion signal arrives.
+- Detect inactivity >10s as “nearing completion” to avoid stalls.
+
+Operational notes:
+- Tails `~/.codex/log/codex-tui.log` using FS events with polling fallback.
+- Starts from EOF by default; can process existing content on demand.
+- Registers adapter health and reports periodically.
+
+Implementation and usage details moved to: `../adapters/CODEX_WATCH_ADAPTER.md`.
                 // Create a short-lived race for command execution
                 let race = Race {
                     id: Uuid::new_v4().to_string(),

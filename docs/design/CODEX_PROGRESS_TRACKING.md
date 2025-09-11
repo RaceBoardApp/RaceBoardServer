@@ -1,162 +1,27 @@
-# Codex Progress Tracking Strategy
+# Codex Progress Tracking Strategy (Condensed)
 
-## The Challenge
+This document summarizes how progress is inferred for AI coding sessions (Codex/Gemini). Detailed implementation lives in each adapter document.
 
-Tracking progress for AI sessions is inherently difficult because:
-- We don't know how many steps the AI will take
-- Task complexity varies dramatically
-- AI can change plans mid-execution
+## Signals (priority order)
+- Plan steps (from `update_plan`) → explicit fraction = completed/total.
+- Time vs ETA hint → elapsed/eta, capped at ≤95%.
+- Activity signals → function-call rate and idle time.
 
-## Multi-Level Progress Tracking
+## Heuristics
+- If plan present, use it; otherwise fall back to activity/time.
+- Consider idle >10s as “wrapping up” (≈90%).
+- Never regress visible progress; optimistic overlay fades when server updates arrive.
 
-### 1. Plan-Based Progress (Most Accurate)
+## Complexity Buckets
+- Simple: 10s ETA baseline; Moderate: 30s; Complex: 120s. Buckets are derived from prompt length and action words.
 
-When Codex uses `update_plan`, we have explicit progress information:
+## Learning Hooks
+- Persist session stats to refine bucket ETAs over time (source stats).
+- Feed completed sessions to clustering to inform future bootstrap defaults.
 
-```rust
-struct PlanProgress {
-    total_steps: usize,
-    completed_steps: usize,
-    current_step: Option<String>,
-}
-
-impl PlanProgress {
-    fn calculate_percentage(&self) -> i32 {
-        if self.total_steps == 0 {
-            return 0;
-        }
-        ((self.completed_steps as f64 / self.total_steps as f64) * 100.0) as i32
-    }
-}
-
-// Parse plan updates
-fn handle_plan_update(&mut self, json_str: &str) {
-    if let Ok(data) = serde_json::from_str::<Value>(json_str) {
-        if let Some(plan) = data["plan"].as_array() {
-            let total = plan.len();
-            let completed = plan.iter()
-                .filter(|step| step["status"].as_str() == Some("completed"))
-                .count();
-            let in_progress = plan.iter()
-                .find(|step| step["status"].as_str() == Some("in_progress"));
-            
-            let progress = PlanProgress {
-                total_steps: total,
-                completed_steps: completed,
-                current_step: in_progress.and_then(|s| s["step"].as_str().map(String::from)),
-            };
-            
-            let percentage = progress.calculate_percentage();
-            self.update_race_progress(percentage).await;
-        }
-    }
-}
-```
-
-### 2. Function Call Counting (Activity-Based)
-
-Track the rate of function calls as a proxy for activity:
-
-```rust
-struct ActivityTracker {
-    start_time: Instant,
-    function_call_count: u32,
-    last_activity: Instant,
-    estimated_total_calls: u32, // Based on historical data
-}
-
-impl ActivityTracker {
-    fn estimate_progress(&self) -> i32 {
-        // Method 1: Time-based (if we have ETA)
-        if let Some(eta_sec) = self.initial_eta {
-            let elapsed = self.start_time.elapsed().as_secs();
-            let progress = ((elapsed as f64 / eta_sec as f64) * 100.0).min(95.0);
-            return progress as i32;
-        }
-        
-        // Method 2: Activity decay (no activity = nearing completion)
-        let idle_time = self.last_activity.elapsed().as_secs();
-        if idle_time > 10 {
-            return 90; // Likely finishing up
-        }
-        
-        // Method 3: Call count heuristic
-        // Most Codex tasks involve 10-50 function calls
-        let estimated_progress = match self.function_call_count {
-            0..=5 => 10,   // Just starting
-            6..=10 => 25,  // Early stage
-            11..=20 => 50, // Mid-way
-            21..=30 => 75, // Most work done
-            31..=40 => 85, // Wrapping up
-            _ => 90,       // Nearly done
-        };
-        
-        estimated_progress
-    }
-}
-```
-
-### 3. Hybrid Approach with Learning
-
-Combine multiple signals and learn from historical data:
-
-```rust
-struct SmartProgressTracker {
-    plan_progress: Option<PlanProgress>,
-    activity_tracker: ActivityTracker,
-    prompt_complexity: PromptComplexity,
-    historical_data: HistoricalStats,
-}
-
-#[derive(Debug)]
-enum PromptComplexity {
-    Simple,    // "What's up?", "List files"
-    Moderate,  // "Fix this bug", "Add a feature"
-    Complex,   // "Refactor the architecture", "Implement full system"
-}
-
-impl SmartProgressTracker {
-    fn analyze_prompt(prompt: &str) -> PromptComplexity {
-        let word_count = prompt.split_whitespace().count();
-        let has_code = prompt.contains("```") || prompt.contains("code");
-        let action_words = ["implement", "refactor", "design", "create", "build"];
-        let has_complex_action = action_words.iter().any(|w| prompt.to_lowercase().contains(w));
-        
-        match (word_count, has_complex_action, has_code) {
-            (0..=10, false, false) => PromptComplexity::Simple,
-            (_, true, _) | (30.., _, _) => PromptComplexity::Complex,
-            _ => PromptComplexity::Moderate,
-        }
-    }
-    
-    fn estimate_eta(&self) -> i64 {
-        match self.prompt_complexity {
-            PromptComplexity::Simple => 10,
-            PromptComplexity::Moderate => 30,
-            PromptComplexity::Complex => 120,
-        }
-    }
-    
-    fn calculate_progress(&self) -> i32 {
-        // Priority 1: Explicit plan progress
-        if let Some(ref plan) = self.plan_progress {
-            return plan.calculate_percentage();
-        }
-        
-        // Priority 2: Activity-based with complexity adjustment
-        let base_progress = self.activity_tracker.estimate_progress();
-        
-        // Adjust based on complexity
-        let adjusted = match self.prompt_complexity {
-            PromptComplexity::Simple => (base_progress as f64 * 1.2).min(100.0),
-            PromptComplexity::Moderate => base_progress as f64,
-            PromptComplexity::Complex => (base_progress as f64 * 0.8).max(5.0),
-        };
-        
-        adjusted as i32
-    }
-}
-```
+## See Also
+- Codex Watch adapter: `../adapters/CODEX_WATCH_ADAPTER.md`
+- Gemini Watch adapter: `../adapters/GEMINI_WATCH_ADAPTER.md`
 
 ### 4. Visual Progress Indicators
 

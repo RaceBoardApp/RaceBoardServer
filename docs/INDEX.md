@@ -10,8 +10,12 @@ Start here for an overview, then dive into specific areas.
 - ETA prediction system: [docs/design/ETA_PREDICTION_SYSTEM.md](design/ETA_PREDICTION_SYSTEM.md)
 - Server implementation notes: [docs/design/SERVER_IMPLEMENTATION.md](design/SERVER_IMPLEMENTATION.md)
 - Adapters:
-  - Codex log watcher: [docs/design/CODEX_LOG_TRACKING.md](design/CODEX_LOG_TRACKING.md)
-  - Google/ICS calendar adapter: [docs/adapters/GOOGLE_CALENDAR_ADAPTER.md](adapters/GOOGLE_CALENDAR_ADAPTER.md)
+  - CMD Runner: [docs/adapters/CMD_RUNNER_ADAPTER.md](adapters/CMD_RUNNER_ADAPTER.md)
+  - GitLab CI: [docs/adapters/GITLAB_ADAPTER.md](adapters/GITLAB_ADAPTER.md)
+  - Google/ICS Calendar: [docs/adapters/GOOGLE_CALENDAR_ADAPTER.md](adapters/GOOGLE_CALENDAR_ADAPTER.md)
+  - Claude Code: [docs/adapters/CLAUDE_ADAPTER.md](adapters/CLAUDE_ADAPTER.md)
+  - Codex Watch (log tailer): [docs/adapters/CODEX_WATCH_ADAPTER.md](adapters/CODEX_WATCH_ADAPTER.md)
+  - Gemini Watch (telemetry): [docs/adapters/GEMINI_WATCH_ADAPTER.md](adapters/GEMINI_WATCH_ADAPTER.md)
   - Adapter development guide: [docs/adapters/ADAPTER_DEVELOPMENT_GUIDE.md](adapters/ADAPTER_DEVELOPMENT_GUIDE.md)
 - API surfaces:
   - HTTP OpenAPI: [api/openapi.yaml](../api/openapi.yaml)
@@ -28,4 +32,3 @@ Additional directories:
 - UI: [docs/ui/](ui/)
 - Journal/Notes: [docs/journal/](journal/)
 - Security: [docs/security/](security/)
-

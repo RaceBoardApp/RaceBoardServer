@@ -1,4 +1,4 @@
-# Data Recovery and Integrity Plan
+# Data Integrity and Recovery Plan (sled)
 
 ## Critical Failure Analysis
 
@@ -21,11 +21,11 @@
 2. Check for any backup files or temporary databases
 3. Recover from any available logs or external sources
 
-### Phase 2: Architectural Fixes
-1. **Remove in-memory race limit** or increase to 100,000+
-2. **Always persist first, memory second** - Write-through cache pattern
-3. **Separate historic from active** - Different storage strategies
-4. **Implement WAL (Write-Ahead Logging)** for crash recovery
+### Phase 2: Architectural Fixes (aligned with current design)
+1. Keep a small in-memory active set; persist only on completion (current two‑plane model).
+2. Enforce a clear event cap per race and explicit `duration_sec` on completion.
+3. Maintain a time index (`races_by_time`) for efficient historic scans.
+4. Gate legacy JSON fallbacks behind config; prefer JSON‑first serialization in sled with bincode fallback.
 
 ### Phase 3: Monitoring & Alerts
 1. **Data integrity checks** on startup
@@ -62,16 +62,16 @@ Create/Update Race -> WAL -> Persistence -> Memory Cache -> Response
 ```
 
 ### 3. Backup Strategy
-- **Primary**: SQLite database at `~/.raceboard/races.db`
-- **WAL**: Write-ahead log at `~/.raceboard/wal/`
-- **Backup**: Daily snapshots at `~/.raceboard/backups/`
-- **Export**: JSON export capability for external backup
+- **Primary**: sled database at `~/.raceboard/eta_history.db` (JSON-serialized values).
+- **Snapshots**: Periodic zstd-compressed snapshots of `races`, `source_stats`, and `clusters` trees.
+- **Exports**: JSON export/import tooling for clusters and source stats.
+- **Location**: `~/.raceboard/backups/` with date-stamped files and retention policy.
 
 ### 4. Monitoring
-- Storage capacity alerts
-- Data loss detection
-- Backup verification
-- Cluster rebuild data sufficiency checks
+- Storage capacity and sled lock acquisition failures.
+- Data loss detection (unexpected time-index gaps) with repair on startup.
+- Backup job success metrics and periodic restore validation in staging.
+- Cluster rebuild sufficiency checks (minimum samples, noise ratio).
 
 ## Prevention Measures
 
@@ -96,13 +96,12 @@ Create/Update Race -> WAL -> Persistence -> Memory Cache -> Response
 ## Recovery Actions
 
 ### Immediate Actions
-1. Remove the 1000 race limit
-2. Implement write-through persistence
-3. Add data recovery tooling
-4. Add monitoring and alerts
+1. Ensure eviction is logged and capped by `max_races`; avoid silent loss.
+2. Add snapshot/restore helpers and document procedures.
+3. Add monitoring and alerts for capacity/evictions/failed flushes.
 
 ### Long-term Actions
-1. Implement proper data lifecycle management
-2. Add data export/import capabilities
-3. Implement distributed storage for redundancy
-4. Add data validation and integrity checks
+1. Formalize data lifecycle policies and retention.
+2. Harden export/import and add schema migration tooling.
+3. Explore replication options if multi-host is required.
+4. Add periodic audits and integrity checks with repair utilities.

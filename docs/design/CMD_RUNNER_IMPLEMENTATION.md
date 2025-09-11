@@ -1,55 +1,26 @@
-# Raceboard Command Runner
+# Raceboard Command Runner (Design Notes)
 
-This document describes the `raceboard-cmd` adapter, a command-line tool for executing and tracking shell commands as races in the Raceboard server.
+Last updated: 2025-09-11
 
-## Overview
+This document captures the design intent for the `raceboard-cmd` adapter and defers day-to-day usage to the adapter docs.
 
-The `raceboard-cmd` adapter is a key component of the Raceboard ecosystem. It allows you to track any shell command, from a simple `ls -la` to a complex build script, as a race in the Raceboard UI.
+See usage and options: `../adapters/CMD_RUNNER_ADAPTER.md`.
 
-## Usage
+## Goals
+- Track any local shell command as a race with minimal friction.
+- Provide lightweight progress and rich context (stdout batches, working dir, command string).
+- Fail-safe behavior: never block the command, tolerate server unavailability.
 
-To use the `raceboard-cmd` adapter, you simply prepend it to the command you want to track:
+## Behavior (Summary)
+- Creates a race (`source=cmd`), transitions `queued → running` when the process starts.
+- Streams batched stdout lines as `Event{ event_type: "stdout" }` and completes with `passed/failed` on exit status.
+- Optional ETA hint drives optimistic progress; otherwise progress remains event-driven.
+- Metadata keys: `command`, `working_dir` (optional), user-provided pairs, optional `deeplink`.
 
-```bash
-raceboard-cmd -- <command> [args...]
-```
+## Reliability Notes
+- Network failures: retries with jitter; drops non-critical events if the server is unreachable (race lifecycle is prioritized).
+- Large outputs: batch and cap payload size to avoid oversized requests.
 
-### Examples
-
-**Track a simple command:**
-
-```bash
-raceboard-cmd -- ls -la
-```
-
-**Track a long-running process with a custom title:**
-
-```bash
-raceboard-cmd -t "Build Project" -- cargo build
-```
-
-**Track a command and show its output in the terminal:**
-
-```bash
-raceboard-cmd -o -- npm install
-```
-
-## Options
-
-| Option | Short | Description |
-| --- | --- | --- |
-| `--title` | `-t` | Set a custom title for the race. |
-| `--server` | `-s` | Specify the URL of the Raceboard server. |
-| `--eta` | `-e` | Provide an estimated time in seconds for the race. |
-| `--working-dir` | `-d` | Set the working directory for the command. |
-| `--output` | `-o` | Show the command's output in the terminal. |
-| `--metadata` | `-m` | Add key-value metadata to the race. |
-| `--deeplink` | `-l` | Add a deeplink URL to the race. |
-
-## Race Lifecycle
-
-1.  **Created:** When you run `raceboard-cmd`, it first creates a new race in the Raceboard server with a `queued` status.
-2.  **Running:** The adapter then executes the specified command and updates the race status to `running`.
-3.  **Progress Updates:** If you provide an ETA, the adapter will automatically update the race's progress.
-4.  **Output Events:** The adapter captures the command's output and sends it to the server as events.
-5.  **Completion:** When the command finishes, the adapter updates the race status to `passed` or `failed` based on the command's exit code.
+## Future Enhancements
+- Auto-ETA hints for common commands (e.g., `cargo build`, `npm test`).
+- Optional stderr capture as separate `Event{ event_type: "stderr" }`.
