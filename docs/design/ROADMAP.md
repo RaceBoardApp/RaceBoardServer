@@ -13,7 +13,6 @@ Last updated: 2025-09-11
 - Improve adapter examples and quickstart scripts.
 
 ## P2 — Tooling and Releases
-- Packaging/installer for macOS (brew tap) and Linux (.deb/.rpm).
 - Release automation: tagging, changelog, GitHub releases.
 
 ## P3 — Extended Integrations

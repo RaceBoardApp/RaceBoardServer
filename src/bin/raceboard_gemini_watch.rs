@@ -683,3 +683,75 @@ async fn main() -> Result<()> {
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use mockito::{mock, Matcher, server_url};
+
+    #[test]
+    fn test_truncate_ascii_and_utf8() {
+        // ASCII
+        let s = "hello world";
+        assert_eq!(truncate(s, 100), s);
+        assert_eq!(truncate(s, 5), "hello...");
+        // UTF-8 multi-byte (e.g., Chinese characters)
+        let zh = "你好，世界"; // length in bytes > chars
+        let t = truncate(zh, 5);
+        // Should end with ellipsis and not panic; prefix should be valid UTF-8
+        assert!(t.ends_with("..."));
+        let prefix = &t[..t.len()-3];
+        assert!(prefix.chars().count() >= 1);
+    }
+
+    #[test]
+    fn test_estimate_progress_logic() {
+        // Time-based with eta hint
+        let p1 = estimate_progress(Duration::from_secs(1), 0, Some(10));
+        let p2 = estimate_progress(Duration::from_secs(5), 0, Some(10));
+        assert!(p2 >= p1);
+        // Tool-call based tiers
+        assert_eq!(estimate_progress(Duration::from_secs(0), 0, None), 10);
+        assert_eq!(estimate_progress(Duration::from_secs(0), 3, None), 35);
+        assert_eq!(estimate_progress(Duration::from_secs(0), 7, None), 60);
+        assert_eq!(estimate_progress(Duration::from_secs(0), 15, None), 80);
+        assert_eq!(estimate_progress(Duration::from_secs(0), 30, None), 90);
+        // Cap at 95
+        let p_cap = estimate_progress(Duration::from_secs(1000), 0, Some(1));
+        assert_eq!(p_cap, 95);
+    }
+
+    #[tokio::test]
+    async fn test_create_race_posts_to_server() -> Result<()> {
+        let expected_id = "g123";
+        let _m = mock("POST", "/race")
+            .match_header("content-type", Matcher::Regex("application/json".into()))
+            .match_body(Matcher::PartialJson(serde_json::json!({
+                "source": "gemini-cli",
+                "title": "Title",
+                "state": "running"
+            })))
+            .with_status(200)
+            .with_body(serde_json::json!({
+                "id": expected_id,
+                "source": "gemini-cli",
+                "title": "Title",
+                "state": "running",
+                "started_at": chrono::Utc::now(),
+                "progress": 0
+            }).to_string())
+            .create();
+
+        let watcher = GeminiWatcher::new(
+            ServerConfig { url: server_url(), ..Default::default() },
+            PathBuf::from("/dev/null"),
+            true,
+            Some(10),
+            false,
+        )?;
+
+        let created = watcher.create_race("Title".to_string(), HashMap::new()).await?;
+        assert_eq!(created.id, expected_id);
+        Ok(())
+    }
+}

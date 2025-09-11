@@ -1,4 +1,6 @@
-# Health Check System - Detailed Technical Specification
+> Moved — Consolidated into `HEALTH_CHECK_SPEC.md`.
+
+# (Historical) Health Check System - Detailed Technical Specification
 
 ## 1. Data Model Specification
 

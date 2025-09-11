@@ -7,6 +7,8 @@ Start here for an overview, then dive into specific areas.
 - Architecture assessment and critique: [docs/design/ARCHITECTURE_REVIEW.md](design/ARCHITECTURE_REVIEW.md)
 - Configuration reference: [docs/guides/CONFIGURATION.md](guides/CONFIGURATION.md)
 - Data layer and persistence: [docs/specs/DATA_LAYER_SPECIFICATION.md](specs/DATA_LAYER_SPECIFICATION.md)
+- Health checks (adapter registry): [docs/specs/HEALTH_CHECK_SPEC.md](specs/HEALTH_CHECK_SPEC.md)
+- Optimistic progress (server/UI): [docs/specs/OPTIMISTIC_PROGRESS_SPEC.md](specs/OPTIMISTIC_PROGRESS_SPEC.md)
 - ETA prediction system: [docs/design/ETA_PREDICTION_SYSTEM.md](design/ETA_PREDICTION_SYSTEM.md)
 - Server implementation notes: [docs/design/SERVER_IMPLEMENTATION.md](design/SERVER_IMPLEMENTATION.md)
 - Adapters:

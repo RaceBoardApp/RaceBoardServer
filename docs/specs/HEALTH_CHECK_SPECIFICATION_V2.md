@@ -1,4 +1,6 @@
-# Health Check System Specification v2 - Addressing Critical Gaps
+> Moved — Consolidated into `HEALTH_CHECK_SPEC.md`.
+
+# (Historical) Health Check System Specification v2 - Addressing Critical Gaps
 
 ## 1. Identity Model - Supporting Multiple Instances
 

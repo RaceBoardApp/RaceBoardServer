@@ -1,4 +1,6 @@
-# Optimistic Progress: gRPC Changes & Adapter Compatibility
+> Moved — Consolidated into `OPTIMISTIC_PROGRESS_SPEC.md`.
+
+# (Historical) Optimistic Progress: gRPC Changes & Adapter Compatibility
 
 ## 1. gRPC Proto Changes
 

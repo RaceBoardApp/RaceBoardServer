@@ -704,7 +704,7 @@ async fn main() -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use mockito::{Matcher, Server};
+    use mockito::{Matcher, mock, server_url};
 
     #[test]
     fn test_parse_metadata() {
@@ -733,10 +733,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_race_posts_to_server() -> Result<()> {
-        let mut server = Server::new();
         let expected_id = "r123";
-        let _m = server
-            .mock("POST", "/race")
+        let _m = mock("POST", "/race")
             .match_header("content-type", Matcher::Regex("application/json".into()))
             .match_body(Matcher::PartialJson(serde_json::json!({
                 "source": "claude-code",
@@ -754,7 +752,7 @@ mod tests {
             }).to_string())
             .create();
 
-        let adapter = ClaudeAdapter::new(server.url())?;
+        let adapter = ClaudeAdapter::new(server_url())?;
         let race = Race {
             id: Uuid::new_v4().to_string(),
             source: "claude-code".to_string(),

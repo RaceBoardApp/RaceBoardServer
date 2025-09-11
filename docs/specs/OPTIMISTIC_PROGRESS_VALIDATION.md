@@ -1,4 +1,6 @@
-# Optimistic Progress v2 - Implementation Validation
+> Moved — Consolidated into `OPTIMISTIC_PROGRESS_SPEC.md`.
+
+# (Historical) Optimistic Progress v2 - Implementation Validation
 
 ## Original Problem
 "Progress bar jumping, eta making bigger (because it's replacing our optimistic eta) and i can't understand what's going on"

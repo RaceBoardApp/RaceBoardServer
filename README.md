@@ -130,7 +130,7 @@ raceboard-calendar --config calendar_config.toml
 
 ### Advanced Features
 - [ETA Prediction System](docs/design/ETA_PREDICTION_SYSTEM.md) - ML clustering details
-- [Optimistic Progress](docs/specs/OPTIMISTIC_PROGRESS_SUPPORT.md) - Dual-rail visualization
+- [Optimistic Progress](docs/specs/OPTIMISTIC_PROGRESS_SPEC.md) - Dual-rail visualization
 - [Data Layer](docs/specs/DATA_LAYER_SPECIFICATION.md) - Persistence architecture
 
 ## 🛠️ Development

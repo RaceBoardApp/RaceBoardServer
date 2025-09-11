@@ -1,4 +1,6 @@
-# Server Support for Optimistic Progress
+> Moved — Consolidated into `OPTIMISTIC_PROGRESS_SPEC.md`.
+
+# (Historical) Server Support for Optimistic Progress
 
 ## Quick Implementation Guide
 

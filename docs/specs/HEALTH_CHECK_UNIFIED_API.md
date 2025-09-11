@@ -1,9 +1,11 @@
-# Health Check System - Unified API Specification
+> Moved — This draft is superseded by `HEALTH_CHECK_SPEC.md`.
+
+# (Historical) Health Check System - Unified API Specification
 
 ## Reusing Existing Race Endpoints (Breaking Changes)
 
 ### Core Insight
-Adapter health is just a special type of "race" - a long-running process that we're tracking. We can reuse the existing race API with a special source prefix.
+NOTE: The race-based health approach was replaced by a dedicated REST adapter registry. See `HEALTH_CHECK_SPEC.md` for the canonical API.
 
 ## 1. Identity Model Using Race IDs
 
