@@ -1,9 +1,9 @@
 # Data Layer Specification (v7)
 
 Related docs:
-- Server Guide: `docs/SERVER_GUIDE.md`
-- ETA prediction system: `docs/ETA_PREDICTION_SYSTEM.md`
-- Server implementation notes: `docs/SERVER_IMPLEMENTATION.md`
+- Server Guide: `../guides/SERVER_GUIDE.md`
+- ETA prediction system: `../design/ETA_PREDICTION_SYSTEM.md`
+- Server implementation notes: `../design/SERVER_IMPLEMENTATION.md`
 
 This document is the implementation‑grade specification for Raceboard's data layer. It is designed to be clean, robust, and complete while storing only what is necessary for ETA predictions, UI, and rebuild workflows.
 

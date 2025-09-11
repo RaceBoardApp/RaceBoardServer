@@ -1576,5 +1576,5 @@ impl RebuildState {
 }
 // Cluster rebuild pipeline, thresholds, and rollout integration.
 //
-// Background and rationale: `docs/CLUSTER_REBUILDING_PROPOSAL.md` and
-// `docs/ETA_PREDICTION_SYSTEM.md`.
+// Background and rationale: `docs/proposals/CLUSTER_REBUILDING_PROPOSAL.md` and
+// `docs/design/ETA_PREDICTION_SYSTEM.md`.

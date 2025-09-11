@@ -513,4 +513,4 @@ fn calculate_mae(
 // HNSW-assisted DBSCAN and distance cache.
 //
 // This module supports fast neighbor search used by the ETA system.
-// Related docs: `docs/ETA_PREDICTION_SYSTEM.md`, `docs/DATA_LAYER_SPECIFICATION.md`.
+// Related docs: `docs/design/ETA_PREDICTION_SYSTEM.md`, `docs/specs/DATA_LAYER_SPECIFICATION.md`.

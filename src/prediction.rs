@@ -239,5 +239,5 @@ mod tests {
 
 // Prediction engine for ETA and source statistics.
 //
-// See the high-level design in `docs/ETA_PREDICTION_SYSTEM.md` and how it
-// integrates with the data layer in `docs/DATA_LAYER_SPECIFICATION.md`.
+// See the high-level design in `docs/design/ETA_PREDICTION_SYSTEM.md` and how it
+// integrates with the data layer in `docs/specs/DATA_LAYER_SPECIFICATION.md`.

@@ -128,6 +128,22 @@ fn parse_metadata(s: &str) -> Result<(String, String), String> {
     Ok((parts[0].to_string(), parts[1].to_string()))
 }
 
+// Helper to build title from an optional explicit title and a prompt string.
+// - If explicit title is provided, it's used as-is.
+// - Otherwise, if the prompt starts with an 8-char alphanumeric session id like "ABC12345: ",
+//   the prefix is stripped and the rest is trimmed.
+// - Else, the trimmed prompt is returned.
+pub(crate) fn derive_title_from_prompt(prompt_text: &str, explicit_title: Option<String>) -> String {
+    if let Some(t) = explicit_title { return t; }
+    if let Some(colon_pos) = prompt_text.find(": ") {
+        let prefix = &prompt_text[..colon_pos];
+        if prefix.len() == 8 && prefix.chars().all(|c| c.is_alphanumeric()) {
+            return prompt_text[colon_pos + 2..].trim().to_string();
+        }
+    }
+    prompt_text.trim().to_string()
+}
+
 struct ClaudeAdapter {
     client: RaceboardClient,
 }
@@ -174,19 +190,7 @@ impl ClaudeAdapter {
             };
 
             // Clean up title - use provided title or cleaned prompt
-            let race_title = title.unwrap_or_else(|| {
-                // Remove session ID prefix if present
-                if let Some(colon_pos) = prompt_text.find(": ") {
-                    let prefix = &prompt_text[..colon_pos];
-                    if prefix.len() == 8 && prefix.chars().all(|c| c.is_alphanumeric()) {
-                        prompt_text[colon_pos + 2..].trim().to_string()
-                    } else {
-                        prompt_text.trim().to_string()
-                    }
-                } else {
-                    prompt_text.trim().to_string()
-                }
-            });
+            let race_title = derive_title_from_prompt(&prompt_text, title);
 
             // Build rich metadata for better clustering
             let mut race_metadata = HashMap::new();
@@ -695,4 +699,76 @@ async fn main() -> Result<()> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use mockito::{Matcher, Server};
+
+    #[test]
+    fn test_parse_metadata() {
+        let (k, v) = parse_metadata("key=value").unwrap();
+        assert_eq!(k, "key");
+        assert_eq!(v, "value");
+        assert!(parse_metadata("novalue").is_err());
+        assert!(parse_metadata("=").is_ok());
+    }
+
+    #[test]
+    fn test_derive_title_from_prompt() {
+        // Uses explicit title when provided
+        let t = derive_title_from_prompt("ABCDEFGH: Do the thing", Some("My Title".to_string()));
+        assert_eq!(t, "My Title");
+        // Strips 8-char session id prefix
+        let t = derive_title_from_prompt("ABCDEFGH: Do the thing", None);
+        assert_eq!(t, "Do the thing");
+        // Keeps when prefix not 8 alnum
+        let t = derive_title_from_prompt("ABCD: Not a session id", None);
+        assert_eq!(t, "ABCD: Not a session id");
+        // Trims spaces
+        let t = derive_title_from_prompt("  hello world  ", None);
+        assert_eq!(t, "hello world");
+    }
+
+    #[tokio::test]
+    async fn test_create_race_posts_to_server() -> Result<()> {
+        let mut server = Server::new();
+        let expected_id = "r123";
+        let _m = server
+            .mock("POST", "/race")
+            .match_header("content-type", Matcher::Regex("application/json".into()))
+            .match_body(Matcher::PartialJson(serde_json::json!({
+                "source": "claude-code",
+                "title": "My Task",
+                "state": "running"
+            })))
+            .with_status(200)
+            .with_body(serde_json::json!({
+                "id": expected_id,
+                "source": "claude-code",
+                "title": "My Task",
+                "state": "running",
+                "started_at": Utc::now(),
+                "progress": 0
+            }).to_string())
+            .create();
+
+        let adapter = ClaudeAdapter::new(server.url())?;
+        let race = Race {
+            id: Uuid::new_v4().to_string(),
+            source: "claude-code".to_string(),
+            title: "My Task".to_string(),
+            state: RaceState::Running,
+            started_at: Utc::now(),
+            eta_sec: None,
+            progress: Some(0),
+            deeplink: None,
+            metadata: Some(HashMap::new()),
+        };
+
+        let created = adapter.create_race(&race).await?;
+        assert_eq!(created.id, expected_id);
+        Ok(())
+    }
 }

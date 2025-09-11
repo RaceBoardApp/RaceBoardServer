@@ -11,8 +11,8 @@ Scope:
 - Operational characteristics (observability, reliability, scalability)
 
 References:
-- docs/SERVER_GUIDE.md
-- docs/DATA_LAYER_SPECIFICATION.md (v7)
+- ../guides/SERVER_GUIDE.md
+- ../specs/DATA_LAYER_SPECIFICATION.md (v7)
 - grpc/race.proto
 - src/main.rs, src/app_state.rs, src/handlers.rs, src/grpc_service.rs, src/persistence.rs, src/storage.rs, src/adapter_status.rs, src/models.rs
 
@@ -180,7 +180,7 @@ P3 — Security (as applicable in your environment):
 ## 10) Minimal Changes Suggested for Near-Term
 
 The following concrete, low-risk improvements provide immediate value with minimal code churn:
-- Add a link to this review in docs/INDEX.md for discoverability.
+- Add a link to this review in docs/index.md for discoverability.
 - Document deprecation plan for legacy JSON fallback and dual adapter registration paths.
 - Implement gRPC read-only checks and eta_history field mapping as discrete, local changes.
 

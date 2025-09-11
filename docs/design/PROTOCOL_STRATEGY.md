@@ -45,7 +45,7 @@ FAQ:
 - Will existing gRPC-based adapters break? We will provide a transition window with config flags and clear errors before removal.
 
 Related docs:
-- Server Guide: docs/SERVER_GUIDE.md
-- Adapter Development Guide: docs/ADAPTER_DEVELOPMENT_GUIDE.md
-- Architecture Review: docs/ARCHITECTURE_REVIEW.md
+- Server Guide: ../guides/SERVER_GUIDE.md
+- Adapter Development Guide: ../adapters/ADAPTER_DEVELOPMENT_GUIDE.md
+- Architecture Review: ARCHITECTURE_REVIEW.md
 - gRPC schema: grpc/race.proto (see deprecation notes)

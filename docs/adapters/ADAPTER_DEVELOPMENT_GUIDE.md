@@ -1,9 +1,9 @@
 # Adapter Development Guide (v2)
 
 Related docs:
-- Server Guide: `docs/SERVER_GUIDE.md`
+- Server Guide: `../guides/SERVER_GUIDE.md`
 - HTTP API: `api/openapi.yaml`
-- Calendar adapter details: `docs/GOOGLE_CALENDAR_ADAPTER.md`
+- Calendar adapter details: `./GOOGLE_CALENDAR_ADAPTER.md`
 
 This guide provides everything you need to know to build your own custom adapters for Raceboard.
 
@@ -105,4 +105,3 @@ upsert_race(&race).await?;
 ## 6. Error Handling
 
 The Raceboard server uses standard HTTP status codes to indicate the success or failure of an API request. If a request fails, the body of the response will contain a JSON object with an `error` field that explains the reason for the failure.
-

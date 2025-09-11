@@ -1,8 +1,8 @@
 # Google Calendar Adapter for Raceboard (v2)
 
 Related docs:
-- Server Guide: `docs/SERVER_GUIDE.md`
-- Configuration (ICS or Google OAuth): `docs/CONFIGURATION.md`
+- Server Guide: `../guides/SERVER_GUIDE.md`
+- Configuration (ICS or Google OAuth): `../guides/CONFIGURATION.md`
   - ICS mode requires only your secret iCal URL (no Google Cloud)
   - Google mode uses OAuth Desktop credentials (more real‑time, less delay)
 

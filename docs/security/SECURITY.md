@@ -21,5 +21,5 @@ Future options (not implemented):
 - Configurable auth on admin endpoints (role-based access).
 
 This document complements:
-- docs/ARCHITECTURE_REVIEW.md (Security Posture section)
-- docs/SERVER_GUIDE.md (Security & Local Deployment)
+- ../design/ARCHITECTURE_REVIEW.md (Security Posture section)
+- ../guides/SERVER_GUIDE.md (Security & Local Deployment)

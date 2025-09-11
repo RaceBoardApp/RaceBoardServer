@@ -3,9 +3,9 @@
 ## Overview
 
 Related docs:
-- Server Guide: `docs/SERVER_GUIDE.md`
-- Data layer and persistence: `docs/DATA_LAYER_SPECIFICATION.md`
-- Cluster rebuilding and rollout: `docs/CLUSTER_REBUILDING_PROPOSAL.md`
+- Server Guide: `../guides/SERVER_GUIDE.md`
+- Data layer and persistence: `../specs/DATA_LAYER_SPECIFICATION.md`
+- Cluster rebuilding and rollout: `../proposals/CLUSTER_REBUILDING_PROPOSAL.md`
 - HTTP API reference: `api/openapi.yaml`
 - gRPC schema: `grpc/race.proto`
 
@@ -60,7 +60,7 @@ The system consists of several interconnected components:
 
 ## Cluster Rebuilding (merged)
 
-This section consolidates the core of the former `docs/CLUSTER_REBUILDING_PROPOSAL.md` into the ETA guide so all prediction and clustering logic lives in one place.
+This section consolidates the core of the former `../proposals/CLUSTER_REBUILDING_PROPOSAL.md` into the ETA guide so all prediction and clustering logic lives in one place.
 
 ### Triggers
 - Periodic: weekly rebuild per source.

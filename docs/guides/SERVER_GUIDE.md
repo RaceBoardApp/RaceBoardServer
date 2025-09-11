@@ -38,7 +38,7 @@ curl http://localhost:7777/health
 ```
 
 ## Configuration
-Configuration is read from `config.toml` in the repo root, then overridden by environment variables. See also `docs/CONFIGURATION.md` for full details.
+Configuration is read from `config.toml` in the repo root, then overridden by environment variables. See also `CONFIGURATION.md` for full details.
 
 Example `config.toml` (excerpt):
 ```
@@ -107,9 +107,9 @@ RUST_LOG=debug,hyper=warn,tower=warn cargo run --bin raceboard-server
 Adapters are independent binaries that POST to the server HTTP API. Adapters must use REST for all writes and health reporting; gRPC is reserved for UI/ops and adapter-oriented gRPC RPCs are deprecated. Note: Race endpoints (/race, /race/{id}, /race/{id}/event) explicitly reject adapter:* IDs; adapters must use /adapter/register, /adapter/health, and /adapter/deregister for lifecycle and health.
 
 Selected docs:
-- Codex log watcher: `src/bin/raceboard_codex_watch.rs` (see `docs/CODEX_LOG_TRACKING.md`)
-- Google/ICS calendar free‑time: `src/bin/raceboard_calendar.rs` (see `docs/GOOGLE_CALENDAR_ADAPTER.md`)
-- Shell runner and others: see `docs/ADAPTER_DEVELOPMENT_GUIDE.md`
+- Codex log watcher: `src/bin/raceboard_codex_watch.rs` (see `../design/CODEX_LOG_TRACKING.md`)
+- Google/ICS calendar free‑time: `src/bin/raceboard_calendar.rs` (see `../adapters/GOOGLE_CALENDAR_ADAPTER.md`)
+- Shell runner and others: see `../adapters/ADAPTER_DEVELOPMENT_GUIDE.md`
 
 ## Development Tips
 - Rebuild after changing protobufs in `grpc/race.proto`: `cargo build`

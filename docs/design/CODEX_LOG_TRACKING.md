@@ -1,8 +1,8 @@
 # Codex Log-Based Tracking Solution
 
 Related docs:
-- Server Guide: `docs/SERVER_GUIDE.md`
-- Configuration & endpoints: `docs/CONFIGURATION.md`, `api/openapi.yaml`
+- Server Guide: `../guides/SERVER_GUIDE.md`
+- Configuration & endpoints: `../guides/CONFIGURATION.md`, `api/openapi.yaml`
 
 ## Discovery
 

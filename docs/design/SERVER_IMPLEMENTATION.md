@@ -1,10 +1,10 @@
 # Server Implementation
 
 Related docs:
-- Server Guide: `docs/SERVER_GUIDE.md`
-- Configuration: `docs/CONFIGURATION.md`
-- Data layer and persistence: `docs/DATA_LAYER_SPECIFICATION.md`
-- ETA prediction system: `docs/ETA_PREDICTION_SYSTEM.md`
+- Server Guide: `../guides/SERVER_GUIDE.md`
+- Configuration: `../guides/CONFIGURATION.md`
+- Data layer and persistence: `../specs/DATA_LAYER_SPECIFICATION.md`
+- ETA prediction system: `ETA_PREDICTION_SYSTEM.md`
 - HTTP API (OpenAPI): `api/openapi.yaml` and gRPC: `grpc/race.proto`
 
 This document describes the current implementation of the Raceboard server, based on the source code.
